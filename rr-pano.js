@@ -4,7 +4,7 @@ var T=window.THREE; if(!T) return;
 var BASE=(window.RR_PANO_BASE||'pano/');
 var MOBILE=matchMedia('(max-width:820px),(pointer:coarse)').matches;
 var SUF=MOBILE?'_m':'';
-var ENTR={gjelina:{id:'entrance_gjelina',yaw:0},milos:{id:'entrance_milos',yaw:-19.29},delmonico:{id:'entrance_delmonico',yaw:22.17}};
+var ENTR={gjelina:{id:'entrance_gjelina',yaw:-16.7},milos:{id:'entrance_milos',yaw:-19.29},delmonico:{id:'entrance_delmonico',yaw:0}};
 var WALK=[];for(var i=0;i<15;i++)WALK.push('walk_'+(i<10?'0':'')+i);
 var WALKYAW=[-166.7, -133.9, -90.2, -78.2, -80.3, -84.5, -86.1, -87.1, -86.2, -83.6, -79.0, -71.0, -62.8, -55.4, -51.4];
 var FACES={px:[[1,0,0],[0,1,0]],nx:[[-1,0,0],[0,1,0]],py:[[0,1,0],[0,0,-1]],ny:[[0,-1,0],[0,0,1]],pz:[[0,0,1],[0,1,0]],nz:[[0,0,-1],[0,1,0]]};
@@ -37,7 +37,7 @@ function build(){
  new ResizeObserver(size).observe(wrap);return true}
 function size(){if(!renderer)return;var w=wrap.clientWidth,h=wrap.clientHeight;if(!w||!h)return;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();draw()}
 function cube(id){if(window.RR_PANO_FORCE)id=window.RR_PANO_FORCE;if(cache[id])return cache[id];var g=new T.Group(),left=6,mats=[];
- var p=new Promise(function(res){Object.keys(FACES).forEach(function(k){var t=loader.load(BASE+id+'_'+k+SUF+'.jpg?v=20261007c',function(){if(--left===0)res(g)},undefined,function(){if(--left===0)res(g)});
+ var p=new Promise(function(res){Object.keys(FACES).forEach(function(k){var t=loader.load(BASE+id+'_'+k+SUF+'.jpg?v=20261007d',function(){if(--left===0)res(g)},undefined,function(){if(--left===0)res(g)});
   t.colorSpace=T.SRGBColorSpace;t.anisotropy=renderer.capabilities.getMaxAnisotropy();t.wrapS=t.wrapT=T.ClampToEdgeWrapping;
   var m=new T.MeshBasicMaterial({map:t,depthWrite:false,depthTest:false,transparent:true,opacity:1});mats.push(m);
   var f=FACES[k],mesh=new T.Mesh(new T.PlaneGeometry(2,2),m);mesh.position.set(f[0][0],f[0][1],f[0][2]);mesh.up.set(f[1][0],f[1][1],f[1][2]);mesh.lookAt(0,0,0);g.add(mesh)})});
@@ -51,7 +51,7 @@ function draw(){if(!renderer)return;camera.rotation.set(pitch,yaw,0);renderer.re
 function open(m){if(!wrap&&!build())return;mode=m;wrap.classList.add('on');wrap.classList.toggle('tour',m==='walk');size()}
 function close(){setPlay(false);if(wrap)wrap.classList.remove('on');mode=null;scene&&scene.children.slice().forEach(function(c){scene.remove(c)});active=null;fadeFrom=null;
  var b=document.querySelector('#row-view-tabs [data-view="3d"]');if(b&&b.getAttribute('aria-pressed')!=='true')b.click()}
-function entrance(rid){var e=ENTR[rid];if(!e)return;fetch(BASE+e.id+'_nz'+SUF+'.jpg?v=20261007c',{method:'HEAD'}).then(function(r){if(r.ok)entranceOpen(rid,e)}).catch(function(){})}
+function entrance(rid){var e=ENTR[rid];if(!e)return;fetch(BASE+e.id+'_nz'+SUF+'.jpg?v=20261007d',{method:'HEAD'}).then(function(r){if(r.ok)entranceOpen(rid,e)}).catch(function(){})}
 function entranceOpen(rid,e){open('entrance');ui.title.textContent=(document.querySelector('.v3-card[data-id="'+rid+'"] b')||{}).textContent||'Entrance';show(e.id,e.yaw)}
 function go(i){i=Math.max(0,Math.min(WALK.length-1,i));tourIdx=i;ui.range.value=i;ui.title.textContent='Walkthrough '+(i+1)+' / '+WALK.length;
  show(WALK[i],WALKYAW[i]);if(WALK[i+1])cube(WALK[i+1]);if(i>=WALK.length-1)setPlay(false)}
