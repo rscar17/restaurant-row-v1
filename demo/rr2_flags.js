@@ -123,7 +123,7 @@ export const WAVE11_PENDING = {
 // Which data build this package was made and tested for. Documentation plus RR_SHIP.data; the section reads whatever is in
 // BASE/data (or data-rr-data). Any later build with the same folder layout and area names works with the same code;
 // check SHIP_AREA_LIST against its folders.
-export const SHIP_DATA = { build: 'dp20', pkg: 'v1', folder: 'data_plan20xd', status: 'data_plan20 (dp20) + GLB image dedupe + small texture tier + gzip area files', blend: 'restaurant-master_plan_r9r.blend', laptopFolder: 'wave13\\ship\\data\\data_plan20xd', caps: 'gpu_test\\data\\caps', areas: 16 };
+export const SHIP_DATA = { build: 'dp22', pkg: 'v1', folder: 'data_plan22xd', status: 'data_plan22 (dp22) + GLB image dedupe + small texture tier + gzip area files', blend: 'restaurant-master_plan_r9u.blend', laptopFolder: 'wave13\\ship\\data\\data_plan22xd', caps: 'gpu_test\\data\\caps', areas: 16 };
 // The one remaining capture dependency (DECISIONS A2.4 target: none). Documentation plus RR_SHIP.captureDependency.
 export const CAPTURE_DEPENDENCY = { now: 'data/caps (old B000..B085 RGBE + sh.json) lights and reflects the scene via rr2_probes/rr2_light',
   newCapturesShipped: false, replacement: 'lightmatch rr2_codelight.js (RR_FLAGS.codelight=1), not verified at 15:00 ET Oct 15',
