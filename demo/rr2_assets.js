@@ -12,6 +12,34 @@ import PQueue from 'p-queue';
 import { LRUCache } from 'lru-cache';
 import * as Comlink from 'comlink';
 
+// perf (Oct 16): decode plus tier cap in a worker. capBitmap's second createImageBitmap (the 'high' quality resize of a
+// decoded bitmap) runs on the calling thread: 6.5 s of main thread on the Intel laptop tier (lowtex 1024). The worker
+// runs the same two calls with the same options (decode with orientation, then the same resize when the larger side
+// is over the cap) and transfers the bitmap back. RR_FLAGS.capworker = 1 turns it on (default 0 keeps the
+// main thread path); a worker error falls back to it for that image.
+const CAP_SRC = `self.onmessage = async (e) => { const { id, blob, flipY, M } = e.data; try {
+  let bmp = await createImageBitmap(blob, { imageOrientation: flipY ? 'flipY' : 'from-image', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+  if (M && Math.max(bmp.width, bmp.height) > M) { const k = M / Math.max(bmp.width, bmp.height);
+    const out = await createImageBitmap(bmp, { resizeWidth: Math.max(1, Math.round(bmp.width * k)), resizeHeight: Math.max(1, Math.round(bmp.height * k)), resizeQuality: 'high', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+    bmp.close(); bmp = out; }
+  self.postMessage({ id, bmp }, [bmp]); } catch (err) { self.postMessage({ id, err: String(err) }); } };`;
+const capPool = { ws: [], next: 0, id: 0, wait: new Map(), failed: false };
+function capWorker() {
+  if (capPool.failed) return null;
+  const F = globalThis.RR_FLAGS || {}; if (+(F.capworker ?? 0) === 0 || typeof Worker === 'undefined' || typeof createImageBitmap === 'undefined') return null;
+  if (!capPool.ws.length) { try { const url = URL.createObjectURL(new Blob([CAP_SRC], { type: 'text/javascript' }));
+      const n = Math.max(1, Math.min(+(F.capworkers ?? 4), ((globalThis.navigator && navigator.hardwareConcurrency) || 4) - 1));
+      for (let i = 0; i < n; i++) { const w = new Worker(url); w.onmessage = (e) => { const r = capPool.wait.get(e.data.id); if (!r) return; capPool.wait.delete(e.data.id); if (e.data.err) r.rej(new Error(e.data.err)); else r.res(e.data.bmp); };
+        w.onerror = (e) => { e.preventDefault?.(); capPool.failed = true; for (const r of capPool.wait.values()) r.rej(new Error('cap worker failed')); capPool.wait.clear(); }; capPool.ws.push(w); } }
+    catch (e) { capPool.failed = true; return null; } }
+  const w = capPool.ws[capPool.next++ % capPool.ws.length]; return w;
+}
+export async function decodeCapped(blob, flipY, M) {
+  const cap = M || globalThis.RR_TEX_MAX || 0, w = capWorker();
+  if (w) { try { return await new Promise((res, rej) => { const id = ++capPool.id; capPool.wait.set(id, { res, rej }); w.postMessage({ id, blob, flipY, M: cap }); }); } catch (e) { /* main thread below */ } }
+  const bmp = await createImageBitmap(blob, { imageOrientation: flipY ? 'flipY' : 'from-image', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+  return capBitmap(bmp, M);
+}
 export const netQueue = new PQueue({ concurrency: 6 });
 export const PRI = { start: 30, near: 20, area: 10, far: 0 };
 
@@ -104,8 +132,7 @@ export async function upgradeSmallTextures(renderer, { perFrame = 1, order = nul
       const live = [...e.allUsers].some(t => renderer.properties.get(t).__webglInit || e.users.has(t) || (e.late && e.late.has(t)));
       if (!live) { smallStats.skipped = (smallStats.skipped || 0) + 1; continue; }
       const blob = await queuedFetch(s.url, { priority: PRI.far, as: 'blob' }); smallStats.bytes += blob.size;
-      let bmp = await createImageBitmap(blob, { imageOrientation: s.flipY ? 'flipY' : 'from-image', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
-      bmp = await capBitmap(bmp, M);
+      let bmp = await decodeCapped(blob, s.flipY, M);
       await waitSlot(); const t0 = performance.now();
       // a fresh Source (new cache key): every texture gets its own full size GL texture, never the storage of the small one
       const ns = new THREE.Source(bmp); ns.userData = { smallFull: s.url }; let up = 0;
@@ -188,8 +215,7 @@ function sharedBitmapTexture(url, flipY, priority, getBlob = null) {
     // (same name, longest side 512, WebP); upgradeSmallTextures() swaps the full picture in after the view opens
     let fetchUrl = url; if (smallTier() && !getBlob && /\/img\//.test(url)) { fetchUrl = url.replace('/img/', '/img_s/'); e.small = { url, flipY, priority }; e.allUsers = new Set(); SMALLREG.push(e); }
     e.ready = (getBlob ? getBlob() : queuedFetch(fetchUrl, { priority, as: 'blob' }))
-      .then(b => createImageBitmap(b, { imageOrientation: flipY ? 'flipY' : 'from-image', premultiplyAlpha: 'none', colorSpaceConversion: 'none' }))
-      .then(bmp => capBitmap(bmp, M))
+      .then(b => decodeCapped(b, flipY, M))
       .then(bmp => { e.src.data = bmp; stats.bitmapImages++; const ev = EVER.get(url) || {}; ev[flipY ? 'f' : 'n'] = bmp.width * bmp.height; EVER.set(url, ev); for (const u of e.users) u.needsUpdate = true; maybeClose(e); })
       .catch(err => { e.error = String(err); for (const u of e.users) u.userData.error = e.error; });
   } else memStats.shared++;
@@ -234,8 +260,7 @@ export function bitmapTexture(url, { flipY = true, priority = PRI.area } = {}) {
   const M = (+((globalThis.RR_FLAGS || {}).lowtex || 0)) ? texMax() : undefined;
   const t = new THREE.Texture(); t.flipY = false; t.userData.url = url; // orientation is applied by createImageBitmap; WebGL ignores UNPACK_FLIP_Y for bitmaps
   t.userData.ready = queuedFetch(url, { priority, as: 'blob' })
-    .then(b => createImageBitmap(b, { imageOrientation: flipY ? 'flipY' : 'from-image', premultiplyAlpha: 'none', colorSpaceConversion: 'none' }))
-    .then(bmp => capBitmap(bmp, M)) // RR_TEX_MAX from the device tier (rr2_tier.js); unchanged when no tier is set
+    .then(b => decodeCapped(b, flipY, M)) // RR_TEX_MAX from the device tier (rr2_tier.js); unchanged when no tier is set
     .then(bmp => { t.image = bmp; t.needsUpdate = true; stats.bitmapImages++; })
     .catch(e => { t.userData.error = String(e); });
   return t;
