@@ -82,7 +82,19 @@ if (S && rr && tabs) {
       S.select(order[(Math.max(0, i) + (a === 'next' ? 1 : order.length - 1)) % order.length]); } });
   // the 3D tab and the automatic open both land on the whole row, as on v52
   if (b3d) b3d.addEventListener('click', () => { const M = S.modes; if (M) M._v52top = false; setTimeout(() => { if (S.state.ready) showWhole(); ui(); }, 0); });
-  const waitModes = setInterval(() => { if (S.modes && S.modes.D && S.modes.D.overview) { holdWhole(); clearInterval(waitModes); S.modes.on('mode', ui); } }, 50);
+  // v52 rules inside the viewer: a label tap opens that restaurant's entrance view (v52 "Tap an entrance"), never the isolated
+  // cut-away orbit, so the modes' "Back to the row" bar never shows over the v52 controls. Entrance views keep the desktop pose
+  // at every stage shape: below 16:9 (tablets, narrow windows, portrait phones) the field of view widens so the horizontal view
+  // stays the desktop one, instead of the data's pulled back 'narrow' framing (capped at 95 degrees).
+  const v52modes = (M) => {
+    const iso = M.isolate.bind(M);
+    M.isolate = (id) => (id ? S.select(id) : iso(null));
+    M.heroView = function (id) { const h = this.D.heroes[id]; const src = this.heroAlt && this.heroAlt[id] && h.alt ? (h.alt.wide || h.view) : h.view;
+      const a = this.P.camera.aspect || 16 / 9, base = src.fov || 60; if (a >= 16 / 9) return src;
+      const hf = 2 * Math.atan(Math.tan(base * Math.PI / 360) * 16 / 9), vf = Math.min(95, 2 * Math.atan(Math.tan(hf / 2) / a) * 180 / Math.PI);
+      return { ...src, fov: vf }; };
+  };
+  const waitModes = setInterval(() => { if (S.modes && S.modes.D && S.modes.D.overview) { holdWhole(); clearInterval(waitModes); v52modes(S.modes); S.modes.on('mode', ui); } }, 50);
   new MutationObserver(ui).observe(sec, { subtree: true, attributes: true, attributeFilter: ['aria-selected', 'data-rr-ready'] });
   ui();
   const status = sec.querySelector('[data-rr-status]');
