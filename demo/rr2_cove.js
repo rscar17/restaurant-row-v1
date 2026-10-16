@@ -224,12 +224,25 @@ export class CoveLights {
     const ray = root ? new THREE.Raycaster() : null; if (ray) { ray.near = 0; ray.far = DLG.dyHi + 0.02; root.updateMatrixWorld(true); }
     const upV = new THREE.Vector3(0, 1, 0), downV = new THREE.Vector3(0, -1, 0), nW = new THREE.Vector3(), meshes = []; this.voidLamps = new Set(); if (root) root.traverse(o => { if (o.isMesh && o.visible !== false) meshes.push(o); });
     const C = new THREE.Matrix4().set(1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1), pos = new THREE.Vector3();
+    // perf (Oct 16): every ray here is vertical, and a mesh can only be hit inside its world box (geometry box through
+    // the world matrix, children included: it holds every vertex). So each ray tests only the meshes whose box the ray
+    // segment crosses (1 mm margin), in the same order as the full list, which gives the same hits in the same order
+    // (2 x ~600 rays over ~15000 meshes took 3.1 s). Instanced, skinned and morphed meshes are always tested.
+    // RR_FLAGS.perf = 0 tests the full list.
+    let boxes = null;
+    if (ray && +(F.perf ?? 1) !== 0) { boxes = meshes.map(o => (o.isInstancedMesh || o.isSkinnedMesh || o.isBatchedMesh || o.morphTargetInfluences) ? null : new THREE.Box3().setFromObject(o)); }
+    const cand = (x, z, y0, y1) => { if (!boxes) return meshes; const out = [], e = 1e-3;
+      for (let i = 0; i < meshes.length; i++) { const b = boxes[i]; if (b === null || (x >= b.min.x - e && x <= b.max.x + e && z >= b.min.z - e && z <= b.max.z + e && b.max.y >= y0 - e && b.min.y <= y1 + e)) out.push(meshes[i]); }
+      if (+(F.perfcheck || 0) === 1) { const S = (globalThis.__perfcheck ||= {}); const r = (S.coveRays ||= { calls: 0, bad: 0 }); r.calls++;
+        const h1 = ray.intersectObjects(out, false), h2 = ray.intersectObjects(meshes, false);
+        if (h1.length !== h2.length || h1.some((h, i) => h.object !== h2[i].object || h.distance !== h2[i].distance || h.faceIndex !== h2[i].faceIndex)) r.bad++; }
+      return out; };
     // every lamp over 1.5 m: a lamp over a ceiling sees the first surface under it from its back (a down facing face).
     // Kept in voidLamps for the live light pool (RR_FLAGS.lampVoid, rr2_player.js); the cove term skips them
     if (ray) for (const l of lights) {
       if (l.type === 'SUN') continue;
       const M = C.clone().multiply(new THREE.Matrix4().fromArray(l.matrix.flat()).transpose()); pos.setFromMatrixPosition(M); if (pos.y < 1.5) continue;
-      ray.far = 8; ray.set(pos, downV); const h = ray.intersectObjects(meshes, false).find(x => x.distance > 0.35 && x.face); // past 35 cm: a globe or shade around the lamp is not a ceiling
+      ray.far = 8; ray.set(pos, downV); const h = ray.intersectObjects(cand(pos.x, pos.z, pos.y - 8, pos.y), false).find(x => x.distance > 0.35 && x.face); // past 35 cm: a globe or shade around the lamp is not a ceiling
       if (h) { nW.copy(h.face.normal).transformDirection(h.object.matrixWorld); if (nW.y < -0.5) this.voidLamps.add(l.name); }
     }
     for (const l of lights) {
@@ -238,7 +251,7 @@ export class CoveLights {
       // pointing down only (a wall washer next to a ceiling is not a downlight): the lamp shines along its local -Z
       const zy = new THREE.Vector3().setFromMatrixColumn(M, 2).normalize().y; if (zy < 0.9) continue;
       const P = l.energy * ((l.node_strength && l.node_strength[0]) ?? 1); if (!(P > 0)) continue;
-      if (ray) { ray.far = DLG.dyHi + 0.02; ray.set(pos, upV); if (!ray.intersectObjects(meshes, false).length) continue; }
+      if (ray) { ray.far = DLG.dyHi + 0.02; ray.set(pos, upV); if (!ray.intersectObjects(cand(pos.x, pos.z, pos.y, pos.y + ray.far), false).length) continue; }
       const c = l.color || [1, 1, 1], lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] || 1;
       this.dls.push({ name: l.name, p: pos.clone(), amp: DLG.amp80 * k * P / 80, c: [c[0] / lum, c[1] / lum, c[2] / lum] });
     }

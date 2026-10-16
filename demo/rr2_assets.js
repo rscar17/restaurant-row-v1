@@ -281,6 +281,23 @@ function worker() {
     return (workerApi = api);
   })().catch((e) => { failWorker(e && e.message || e); return null; });
 }
+// perf (Oct 16): a small pool of the same capture worker (RR_FLAGS.capworkers, default 4, at most cores - 1) so the
+// start area's captures decode side by side instead of one after another; each decode is the same code on the same file,
+// so the faces are the same. The first worker keeps the boot and failure rules above; a later one that fails to boot is
+// left out. RR_FLAGS.perf = 0 or capworkers = 1 keeps one worker.
+const pool = []; let poolBooting = 0;
+async function poolApi() {
+  const w0 = await worker(); if (!w0) return null;
+  if (!pool.length || pool[0].api !== w0) { pool.length = 0; pool.push({ api: w0, busy: 0, w: workerObj }); }
+  const F = globalThis.RR_FLAGS || {}, on = +(F.perf ?? 1) !== 0;
+  const want = on ? Math.max(1, Math.min(+(F.capworkers ?? 4), ((globalThis.navigator && navigator.hardwareConcurrency) || 4) - 1)) : 1;
+  while (pool.length + poolBooting < want) { poolBooting++;
+    (async () => { let w = null; try { w = await makeWorker(); const api = Comlink.wrap(w), rec = { api, busy: 0, w };
+        w.addEventListener('error', (e) => { e.preventDefault?.(); const i = pool.indexOf(rec); if (i > 0) pool.splice(i, 1); try { w.terminate(); } catch (x) { /* gone */ } });
+        await withTimeout(api.ping(), WORKER_BOOT_MS, 'capture worker boot'); if (!workerFailed) pool.push(rec); else w.terminate(); }
+      catch (e) { try { w && w.terminate(); } catch (x) { /* gone */ } } finally { poolBooting--; } })(); }
+  let best = pool[0]; for (const q of pool) if (q.busy < best.busy) best = q; return best;
+}
 let mainDecoder = null;   // decodeStack on the page thread, only loaded when the worker is not usable
 async function mainDecode(url, size) { mainDecoder ||= import('./rr2_capworker.js').then(m => m.decodeStack); return (await mainDecoder)(url, size); }
 
@@ -306,9 +323,9 @@ export class CaptureCache {
     this.live.delete(id); this.idle.set(id, e.tex);   // not disposed yet: a nearby section may want it back
   }
   async decode(url, size, fallback) {
-    const w = await worker(), abs = new URL(url, location.href).href;
-    if (w) { try { const r = await withTimeout(w.decodeStack(abs, size), WORKER_CALL_MS, 'capture decode'); stats.workerDecodes++; return r; }
-      catch (e) { stats.workerCallErrors = (stats.workerCallErrors || 0) + 1; if (/timed out/.test(e.message)) failWorker(e.message); } }
+    const p = await poolApi(), w = p && p.api, abs = new URL(url, location.href).href;
+    if (w) { p.busy++; try { const r = await withTimeout(w.decodeStack(abs, size), WORKER_CALL_MS, 'capture decode'); stats.workerDecodes++; return r; }
+      catch (e) { stats.workerCallErrors = (stats.workerCallErrors || 0) + 1; if (/timed out/.test(e.message)) failWorker(e.message); } finally { p.busy--; } }
     stats.mainDecodes++; return fallback ? fallback() : mainDecode(abs, size);
   }
   build(faces, N) {

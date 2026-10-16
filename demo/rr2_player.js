@@ -98,12 +98,30 @@ function areaTextures(root) {
     for (const k in m) add(m[k]); const u = m.userData?.blender?.uniforms; if (u) for (const k in u) add(u[k].value); } });
   return out;
 }
+// perf (Oct 16): the same values as a.getComponent(i, j) per component (three r169 denormalize), read straight from the
+// typed array: one divisor per array type, stride and offset for interleaved data. RR_FLAGS.perfslowfloat = 1 keeps the old loop.
+const DENORM = new Map([[Uint32Array, [4294967295.0, false]], [Uint16Array, [65535.0, false]], [Uint8Array, [255.0, false]],
+  [Int32Array, [2147483647.0, true]], [Int16Array, [32767.0, true]], [Int8Array, [127.0, true]]]);
+function toFloatAttr(a) {
+  const n = a.count, s = a.itemSize, out = new Float32Array(n * s);
+  const il = !!a.isInterleavedBufferAttribute, arr = il ? a.data.array : a.array, st = il ? a.data.stride : s, off = il ? a.offset : 0;
+  const dn = a.normalized && arr.constructor !== Float32Array ? DENORM.get(arr.constructor) : null;
+  if (a.normalized && arr.constructor !== Float32Array && !dn) { for (let i = 0; i < n; i++) for (let j = 0; j < s; j++) out[i * s + j] = a.getComponent(i, j); return out; }
+  if (!dn) { if (!il && arr.constructor === Float32Array && arr.length === n * s) out.set(arr); else if (!il) { for (let k = 0, L = n * s; k < L; k++) out[k] = arr[k]; }
+    else for (let i = 0; i < n; i++) { const b = i * st + off; for (let j = 0; j < s; j++) out[i * s + j] = arr[b + j]; } return out; }
+  const D = dn[0];
+  if (dn[1]) { for (let i = 0; i < n; i++) { const b = i * st + off; for (let j = 0; j < s; j++) out[i * s + j] = Math.max(arr[b + j] / D, -1.0); } }
+  else { for (let i = 0; i < n; i++) { const b = i * st + off; for (let j = 0; j < s; j++) out[i * s + j] = arr[b + j] / D; } }
+  return out;
+}
 function toFloatGeometry(src) {
   const g = new THREE.BufferGeometry();
   if (src.index) g.setIndex(new THREE.BufferAttribute(new Uint32Array(src.index.array), 1));
+  const slow = +((globalThis.RR_FLAGS || {}).perfslowfloat || 0);
   for (const [k, a] of Object.entries(src.attributes)) {
-    const n = a.count, s = a.itemSize, out = new Float32Array(n * s);
-    for (let i = 0; i < n; i++) for (let j = 0; j < s; j++) out[i * s + j] = a.getComponent(i, j);
+    const n = a.count, s = a.itemSize; let out;
+    if (slow) { out = new Float32Array(n * s); for (let i = 0; i < n; i++) for (let j = 0; j < s; j++) out[i * s + j] = a.getComponent(i, j); }
+    else { out = toFloatAttr(a); if (PERF_CHECK()) { const o2 = new Float32Array(n * s); for (let i = 0; i < n; i++) for (let j = 0; j < s; j++) o2[i * s + j] = a.getComponent(i, j); perfCmp('toFloat', out, o2); } }
     g.setAttribute(k, new THREE.BufferAttribute(out, s));
   }
   for (const gr of src.groups) g.addGroup(gr.start, gr.count, gr.materialIndex);
@@ -164,7 +182,63 @@ function smoothCurvedPane(o) {
 // B075 pz, face normal . ray -0.99 while the interpolated normal . ray +0.10): thin flat slabs such as panes and
 // mullions arrive with normals skewed far off their faces, so they shade as if seen edge on (pale flat reeded glass,
 // grey mullions). Returns the share of triangles whose mean vertex normal is more than 60 degrees off the face normal.
+// perf (Oct 16): the same arithmetic as three r169 Vector3 applyMatrix4 / applyMatrix3 + normalize / transformDirection,
+// done on the Float32 arrays toFloatGeometry made (no Vector3 per vertex). Bounding volumes are recomputed like
+// BufferGeometry.applyMatrix4 does when they exist. RR_FLAGS.perf = 0 uses three's own applyMatrix4.
+const PERF_ON = () => +((globalThis.RR_FLAGS || {}).perf ?? 1) !== 0;
+// RR_FLAGS.perfcheck = 1: every fast path also runs the old code and compares bit for bit; counts in globalThis.__perfcheck
+const PERF_CHECK = () => +((globalThis.RR_FLAGS || {}).perfcheck || 0) === 1;
+function perfCmp(name, a, b) { const S = (globalThis.__perfcheck ||= {}); const r = (S[name] ||= { calls: 0, bad: 0, values: 0 }); r.calls++;
+  if (a.length !== b.length || a.constructor !== b.constructor) { r.bad++; return; } const ua = new Uint8Array(a.buffer, a.byteOffset, a.byteLength), ub = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+  let d = 0; for (let i = 0; i < ua.length; i++) if (ua[i] !== ub[i]) d++; r.values += a.length; if (d) { r.bad++; r.diffBytes = (r.diffBytes || 0) + d; } }
+function applyMatrixFast(g, matrix) {
+  if (!PERF_ON()) { g.applyMatrix4(matrix); return g; }
+  if (PERF_CHECK()) { const ref = g.clone(); ref.applyMatrix4(matrix); applyMatrixFast0(g, matrix); for (const k of ['position', 'normal', 'tangent']) if (g.attributes[k]) perfCmp('applyMatrix:' + k, g.attributes[k].array, ref.attributes[k].array); ref.dispose(); return g; }
+  return applyMatrixFast0(g, matrix); }
+function applyMatrixFast0(g, matrix) {
+  const e = matrix.elements, p = g.attributes.position;
+  const plain = (a) => a && !a.isInterleavedBufferAttribute && a.array instanceof Float32Array && !a.normalized && a.itemSize === 3;
+  if (p && !plain(p)) { g.applyMatrix4(matrix); return g; }
+  const nA = g.attributes.normal, tA = g.attributes.tangent;
+  if ((nA && !plain(nA)) || tA) { g.applyMatrix4(matrix); return g; }
+  if (p) { const a = p.array, L = p.count * 3;
+    for (let i = 0; i < L; i += 3) { const x = a[i], y = a[i + 1], z = a[i + 2]; const w = 1 / (e[3] * x + e[7] * y + e[11] * z + e[15]);
+      a[i] = (e[0] * x + e[4] * y + e[8] * z + e[12]) * w; a[i + 1] = (e[1] * x + e[5] * y + e[9] * z + e[13]) * w; a[i + 2] = (e[2] * x + e[6] * y + e[10] * z + e[14]) * w; }
+    p.needsUpdate = true; }
+  if (nA) { const nm = new THREE.Matrix3().getNormalMatrix(matrix).elements, a = nA.array, L = nA.count * 3;
+    for (let i = 0; i < L; i += 3) { const x0 = a[i], y0 = a[i + 1], z0 = a[i + 2];
+      let x = nm[0] * x0 + nm[3] * y0 + nm[6] * z0, y = nm[1] * x0 + nm[4] * y0 + nm[7] * z0, z = nm[2] * x0 + nm[5] * y0 + nm[8] * z0;
+      const s = 1 / (Math.sqrt(x * x + y * y + z * z) || 1); a[i] = x * s; a[i + 1] = y * s; a[i + 2] = z * s; }
+    nA.needsUpdate = true; }
+  if (g.boundingBox !== null) g.computeBoundingBox(); if (g.boundingSphere !== null) g.computeBoundingSphere();
+  return g;
+}
+function badNormalShareFast(g) {
+  const p = g.attributes.position, n = g.attributes.normal; if (!p || !n) return 0;
+  const P = p.array, N = n.array;
+  const idx = g.index ? g.index.array : null, tc = idx ? idx.length / 3 : p.count / 3; if (!tc) return 0;
+  let bad = 0, cnt = 0; const step = Math.max(1, Math.floor(tc / 4000));
+  for (let i = 0; i < tc; i += step) {
+    const a = idx ? idx[i * 3] : i * 3, b = idx ? idx[i * 3 + 1] : i * 3 + 1, c = idx ? idx[i * 3 + 2] : i * 3 + 2;
+    const ax = P[a * 3], ay = P[a * 3 + 1], az = P[a * 3 + 2], bx = P[b * 3], by = P[b * 3 + 1], bz = P[b * 3 + 2], cx = P[c * 3], cy = P[c * 3 + 1], cz = P[c * 3 + 2];
+    // f = (C - B) x (A - B), as Vector3.subVectors + cross
+    const fx0 = cx - bx, fy0 = cy - by, fz0 = cz - bz, tx = ax - bx, ty = ay - by, tz = az - bz;
+    let fx = fy0 * tz - fz0 * ty, fy = fz0 * tx - fx0 * tz, fz = fx0 * ty - fy0 * tx;
+    if (fx * fx + fy * fy + fz * fz < 1e-14) continue;
+    { const s = 1 / (Math.sqrt(fx * fx + fy * fy + fz * fz) || 1); fx *= s; fy *= s; fz *= s; }
+    let mx = N[a * 3] + N[b * 3], my = N[a * 3 + 1] + N[b * 3 + 1], mz = N[a * 3 + 2] + N[b * 3 + 2]; mx += N[c * 3]; my += N[c * 3 + 1]; mz += N[c * 3 + 2];
+    if (mx * mx + my * my + mz * mz < 1e-12) { bad++; cnt++; continue; }
+    { const s = 1 / (Math.sqrt(mx * mx + my * my + mz * mz) || 1); mx *= s; my *= s; mz *= s; }
+    if (mx * fx + my * fy + mz * fz < 0.5) bad++; cnt++;
+  }
+  return cnt ? bad / cnt : 0;
+}
 function badNormalShare(g) {
+  if (PERF_ON()) { const p = g.attributes.position, n = g.attributes.normal;
+    const ok = (a) => a && !a.isInterleavedBufferAttribute && a.array instanceof Float32Array && !a.normalized && a.itemSize === 3;
+    if (ok(p) && ok(n)) { const v = badNormalShareFast(g); if (PERF_CHECK()) { const S = (globalThis.__perfcheck ||= {}); const r = (S.badNormal ||= { calls: 0, bad: 0 }); r.calls++; if (badNormalShareSlow(g) !== v) r.bad++; } return v; } }
+  return badNormalShareSlow(g); }
+function badNormalShareSlow(g) {
   const p = g.attributes.position, n = g.attributes.normal; if (!p || !n) return 0;
   const idx = g.index ? g.index.array : null, tc = idx ? idx.length / 3 : p.count / 3; if (!tc) return 0;
   const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), f = new THREE.Vector3(), m = new THREE.Vector3(), t = new THREE.Vector3();
@@ -433,8 +507,21 @@ export class RowPlayer {
             for (const nm of names) { const a = g.attributes[nm], n2 = a.itemSize;
               const ArrT = a.isInterleavedBufferAttribute ? a.data.array.constructor : a.array.constructor;
               const out = new THREE.BufferAttribute(new ArrT(tris.length * 3 * n2), n2, a.normalized); let w = 0;
+              // perf (Oct 16): the same reads and writes as getX..getW / setX..setW (three r169 denormalize and normalize),
+              // straight on the typed arrays; Float16 attributes and RR_FLAGS.perf = 0 keep the accessor loop
+              if (PERF_ON() && !a.isFloat16BufferAttribute && n2 <= 4) {
+                const il = !!a.isInterleavedBufferAttribute, src = il ? a.data.array : a.array, st = il ? a.data.stride : n2, off = il ? a.offset : 0;
+                const dn = a.normalized ? DENORM.get(src.constructor) || null : null, dst = out.array;
+                const nmul = a.normalized ? (dn ? dn[0] : 0) : 0;
+                const rd = dn ? (dn[1] ? (j) => Math.max(src[j] / dn[0], -1.0) : (j) => src[j] / dn[0]) : (j) => src[j];
+                for (const t of tris) for (let k = 0; k < 3; k++) { const bb3 = t.b[k];
+                  for (let c = 0; c < n2; c++) { let v = 0; for (let q = 0; q < 3; q++) if (bb3[q]) v += bb3[q] * rd(t.ids[q] * st + off + c); dst[w * n2 + c] = nmul ? Math.round(v * nmul) : v; } w++; }
+                if (PERF_CHECK()) { const o2 = new THREE.BufferAttribute(new ArrT(tris.length * 3 * n2), n2, a.normalized); let w2 = 0;
+                  for (const t of tris) for (let k = 0; k < 3; k++) { const bb3 = t.b[k]; for (let c = 0; c < n2; c++) { let v = 0; for (let q = 0; q < 3; q++) if (bb3[q]) v += bb3[q] * a[GET[c]](t.ids[q]); o2[SET[c]](w2, v); } w2++; }
+                  perfCmp('sheetSplit', dst, o2.array); }
+              } else {
               for (const t of tris) for (let k = 0; k < 3; k++) { const bb3 = t.b[k];
-                for (let c = 0; c < n2; c++) { let v = 0; for (let q = 0; q < 3; q++) if (bb3[q]) v += bb3[q] * a[GET[c]](t.ids[q]); out[SET[c]](w, v); } w++; }
+                for (let c = 0; c < n2; c++) { let v = 0; for (let q = 0; q < 3; q++) if (bb3[q]) v += bb3[q] * a[GET[c]](t.ids[q]); out[SET[c]](w, v); } w++; } }
               ng.setAttribute(nm, out); }
             if (groups) { let start = 0; for (const t of tris) { const gr = groups.find(q => t.i >= q.start && t.i < q.start + q.count); ng.addGroup(start, 3, gr ? gr.materialIndex : 0); start += 3; } }
             const m = new THREE.Mesh(ng, o.material); m.name = o.name; m.position.copy(o.position); m.quaternion.copy(o.quaternion); m.scale.copy(o.scale);
@@ -518,6 +605,7 @@ export class RowPlayer {
         const ng = new THREE.BufferGeometry(); for (const a of Object.keys(g.attributes)) ng.setAttribute(a, g.attributes[a]);
         ng.setIndex(keep); o.geometry = ng; out.push([nm, dropped, keep.length / 3]); });
       this.report.floorBlack = out; }
+    mark('pass floorblack');
     // Coplanar sheets. The model has several floor objects on the same plane (d2_floor, ap_floor, continuous-marble-floor at
     // z 0.04 to 0.05, all cream marble) and stacked ceiling fills. Cycles shows one consistent surface; here each object is
     // lit by its own capture, and the depth test picks a winner triangle by triangle, so the floor flickered tile by tile
@@ -564,6 +652,7 @@ export class RowPlayer {
           for (const v of [a, b, c]) if (!done[v]) { done[v] = 1; na.setXYZ(v, nl.x * sg, nl.y * sg, nl.z * sg); } }
         na.needsUpdate = true; renormal++; }
       this.report.coplanarSheets = { sheets: sheets.length, moved, renormal }; }
+    mark('pass coplanar');
     // Agent voltfix (Oct 14), two flags, both off by default. Ray casts from Ryan's Voltaire view (Blender 17.9 -9.4 1.6,
     // looking +y; gpu_test volt1 cube_VS_nz; that camera stands inside the MATTEOS_Front shell, between the bays and the
     // dark mt2_int walls, looking out at the back of the storefront) name leftovers of an older storefront line, which
@@ -610,6 +699,7 @@ export class RowPlayer {
           const k = dropTris(o, (a, b, c) => { const x = (a.x + b.x + c.x) / 3, y = -(a.z + b.z + c.z) / 3; return x > bx[0] && x < bx[1] && y > bx[2] && y < bx[3]; });
           if (k) { tris += k; objs.push(o.userData.invName || o.name); } });
         this.report.oldpane = { tris, objs }; } }
+    mark('pass voltfix');
     // RR_FLAGS.glassfix = 2 (glass agent 10): the rotunda panes and the Gjelina storefront panes share gjl_glass_clear but
     // only the rotunda wants the clear glass lift (rr2_reflect.js thinGlass). Before thinGlass patches the shared
     // material, the rotunda meshes (object or parent name matching RR_FLAGS.glassfixobj, default ^rot_) get one copy of it
@@ -634,6 +724,7 @@ export class RowPlayer {
           o.material = m; n++; });
         this.report.glassfix2 = { mats: made.size, meshes: n, objs };
       } }
+    mark('pass glassfix');
     // RR_FLAGS.lowglass = 1 (agent glassfix3): smooth normals on curved clear panes (smoothCurvedPane above), before
     // thinGlass and before mergeStatic (transparent panes are never merged, so the copy stays). lowglasscurve = 0 skips it.
     { const FL = globalThis.RR_FLAGS || {};
@@ -642,6 +733,7 @@ export class RowPlayer {
           if (PANE_PROP.test(o.material.name || '') || PANE_PROP.test(o.userData.invName || o.name || '')) return;
           const r = smoothCurvedPane(o); if (r && out.length < 60) out.push({ o: o.userData.invName || o.name, m: o.material.name, ...r }); });
         this.report.lowglassCurved = out; } }
+    mark('pass lowglass');
     // unlit glTF cutouts (KHR_materials_unlit: poppy_texture, orchid_leaf, orchid_pod) are MeshBasicMaterial and skip the
     // loop below. GLTFLoader gave their BLEND alpha depthWrite false; once applyBlenderGraph turns them into opaque alpha
     // tested materials, the walls drawn after them paint over every pixel (the World Cafe poppy garland, 310 bk_poppy
@@ -650,6 +742,7 @@ export class RowPlayer {
       if (!m || !m.isMeshBasicMaterial || m.transparent || !(m.alphaTest > 0)) return;
       if (!m.depthWrite) { m.depthWrite = true; const L = (this.report.unlitDepth ||= []); if (!L.includes(m.name)) L.push(m.name); }
       if (this.msaa > 0 && !m.alphaToCoverage) { m.alphaToCoverage = true; m.needsUpdate = true; } });
+    mark('pass unlit');
     const seenM = new Set();
     root.traverse(o => { if (!o.isMesh || !o.material.isMeshStandardMaterial) return; const m = o.material;
       // tier without transmission: three's transmission pass (one more scene render into a mip chain) is skipped. thinGlass
@@ -675,6 +768,7 @@ export class RowPlayer {
       if (!seenM.has(m)) for (const k of ['map', 'emissiveMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'alphaMap', 'bumpMap']) { const t = m[k];
         if (t?.isTexture && !t.isCompressedTexture && t.anisotropy < globalThis.RR_MAX_ANISO) { t.anisotropy = globalThis.RR_MAX_ANISO; if (t.version > 0) t.needsUpdate = true; } }
       seenM.add(m); });
+    mark('pass material traverse');
     if (!this.lite && this.profile.floor !== false && !(this.tier && !this.tier.reflect)) { // phones skip the planar floor reflection (one extra scene render per frame); the capture reflection stays
       // mirror plane in the middle of the walking floors as the coplanar pass leaves them (it chains every floor level from
       // 0.005 to 0.074 into one group 1.5 mm apart: continuous-marble-floor ends at 0.053, d2_floor 0.0545, ap_floor
@@ -719,26 +813,35 @@ export class RowPlayer {
       this.report.floorMirror = fm;
       if (this.blLights && !(globalThis.RR_FLAGS || {}).noglint && this.profile.glints !== false) { this.floor.addLampGlints(this.scene, [...this.blLights.values()], (globalThis.RR_FLAGS || {}).glint ?? 1); this.report.lampGlints = this.floor.glints; }
     }
+    mark('pass floor mirror');
     if (!(globalThis.RR_FLAGS || {}).nocove && this.profile.cove !== false) { const cv = this.cove = new CoveLights(this.profile.covePatches); const np = cv.collect(root, this.blMats || {}, (globalThis.RR_FLAGS || {}).cove ?? 6) + cv.addDownlights([...(this.blLights?.values() || [])], root);
       this.report.coveLights = { patches: np, constEmitters: cv.constEmitters || 0, downlights: cv.dls.length, lines: cv.report, receivers: cv.patchReceivers(root), outKinds: cv.outReport, sample: cv.patches.slice(0, 3).map(c => ({ p: c.p.toArray().map(v => +v.toFixed(2)), n: c.n.toArray().map(v => +v.toFixed(2)), flux: c.flux.toArray().map(v => +v.toFixed(3)) })) }; if (!np) this.cove = null; }
+    mark('pass cove');
     // Sugarcane near field: the Material_108 strips and the vault light the ceiling slab Mesh_2230 right above them in
     // Cycles; baked per vertex at load (rr2_sugbake.js). Opt in with RR_FLAGS.sugbake (gain, 1 = Cycles strength) until A/B
     if ((globalThis.RR_FLAGS || {}).sugbake) { const rep = {}; bakeSugarcane(root, this.blMats || {}, { gain: +(globalThis.RR_FLAGS || {}).sugbake || 1, report: rep }); this.report.sugBake = rep; }
     // room interiors behind the storefronts: per room gain and tint by surface orientation (rr2_rooms.js); RR_FLAGS.norooms
     // turns it off, RR_FLAGS.roomcal replaces the calibration table, player.rooms.uOn.value = 0 switches it live for A/B
     if (!(globalThis.RR_FLAGS || {}).norooms) { const F = globalThis.RR_FLAGS || {}; this.rooms = new RoomLighting(F.roomcal ? { cal: F.roomcal } : {}); this.report.rooms = this.rooms.patchAll(root); }
+    mark('pass rooms+sugbake');
     this.buildCollision();
+    mark('pass collision');
     this.addFloorUnderlay();
+    mark('pass underlay');
     // ceiling crack backing (rr2_cove.js addCrackBacking): before the merge, which then takes the copies with their sheets
     this.report.crackBacking = addCrackBacking(root);
+    mark('pass crackBacking');
     // hook: rr2_modes tags units and ceilings before groups merge (after the crack backing, so its copies carry the same tags)
     if (this.beforeMerge) this.beforeMerge(this.root);
+    mark('pass beforeMerge');
     this.mergeStatic();
+    mark('pass mergeStatic');
     // black glass (rr2_reflect.js thinGlass, glassLate) is drawn at the end of the opaque pass, after everything opaque it
     // covers, still blended as a pane: three's transmission target then holds it, so the reeded panes in front of it read
     // dark. Set after the merge and the cove receivers, which both skip transparent materials and must keep skipping it.
     this.root.traverse(o => { const m = o.material; if (!o.isMesh || !m || Array.isArray(m) || !m.userData?.glassLate) return;
       o.renderOrder = Math.max(o.renderOrder || 0, 2); if (m.transparent) { m.transparent = false; m.needsUpdate = true; } });
+    mark('pass glassLate');
     // load time: materials whose programs differ only by the light field, cove receiver or floor mirror patch share one
     // program, the missing parts switched off by per material uniforms (rr2_probes.js unifyVariants); every material draws
     // exactly what it drew before. ?nounify=1 turns it off for an A/B.
@@ -761,7 +864,9 @@ export class RowPlayer {
         let flat = !o.isInstancedMesh; if (flat) { bb.setFromObject(o); bb.getSize(sz); const s = [sz.x, sz.y, sz.z].sort((a, b) => a - b); flat = s[0] < 0.003 && s[1] > 0.05; }
         const r = byM.get(o.material) || { flat: true, n: 0 }; r.flat = r.flat && flat; r.n++; byM.set(o.material, r); });
       let mats = 0, meshes = 0, kept = 0; for (const [m, r] of byM) { if (r.flat) { m.forceSinglePass = true; mats++; meshes += r.n; } else kept++; }
-      this.report.panesingle = { materials: mats, meshes, keptTwoPass: kept }; }    if (this.floor) { this.floor.meshes = []; this.floor.collect(this.root); }
+      this.report.panesingle = { materials: mats, meshes, keptTwoPass: kept }; }    mark('pass unify+progcut');
+    if (this.floor) { this.floor.meshes = []; this.floor.collect(this.root); }
+    mark('pass floor collect');
     // the Blender lamps themselves, nearest and strongest first, on top of the capture lighting
     if (this.lightFactor > 0) {
       // an explicit, small lamp set (Astra: start with the lights that shape the entrance, sconces and cove) keeps every
@@ -791,6 +896,7 @@ export class RowPlayer {
       // 1 = Matteo's five, tx / gj / all / a comma list of rooms and lamps: rr2_lampcards.js LAMP_CARD_TABLE (cards2 agent)
       if (LC && LC !== '0') this.report.lampCards = addLampCardsSpec(this.scene, all, lampCardSpec(LC), { mirrorRT: this.floor?.rt || null });
       if (F.shaftlamps) this.report.shaftLamps = addShaftLamps(this.root, all, MATTEO_SHAFT, { gain: Math.max(0, +F.shaftlamps - (this.lightFactor || 0)) }); }
+    mark('pass lights+lampcards');
     // MSAA: the samples go on the target the SCENE is drawn into: with AO that is N8AO's own beauty target (three r169
     // resolves colour and the depth texture N8AO reads with one blit); without AO the RenderPass draws into the composer targets
     const maxS = this.renderer.capabilities.maxSamples || 0; const ns = Math.min(this.msaa, maxS); this.report.msaaSamples = ns;
@@ -799,6 +905,8 @@ export class RowPlayer {
     if (this.ao) {
       const w = this.canvas.clientWidth || innerWidth, h = this.canvas.clientHeight || innerHeight;
       const ao = this.aoPass = new N8AOPass(this.scene, this.camera, w, h);
+      // RR_FLAGS.aotransp = 0 (ship fps test): N8AO without its separate transparency pass (auto detected otherwise)
+      if ((globalThis.RR_FLAGS || {}).aotransp !== undefined && !+globalThis.RR_FLAGS.aotransp) { ao.autoDetectTransparency = false; ao.configuration.transparencyAware = false; }
       const AF = globalThis.RR_FLAGS || {}; // aoRad, aoInt: A/B overrides (agent_lamps)
       Object.assign(ao.configuration, { aoRadius: AF.aoRad ?? 0.9, distanceFalloff: 0.6, intensity: AF.aoInt ?? 2.2, aoSamples: 16, denoiseSamples: 8, denoiseRadius: 8, halfRes: true, gammaCorrection: false, screenSpaceRadius: false, color: new THREE.Color(0, 0, 0) }, this.profile.aoConfig || {});
       if (ns > 0) { ao.beautyRenderTarget.samples = ns; ao.beautyRenderTarget.dispose(); }
@@ -829,6 +937,7 @@ export class RowPlayer {
     if (this.toneMap === 'grade360') { this.grade = new ShaderPass(GRADE360, 'tDiffuse'); this.grade.uniforms.ev.value = this.exposureEV; c.addPass(this.grade); } else c.addPass(new OutputPass());
     if ((this.bloomMode === 'ref' || this.bloomMode === 'ref+halo') && this.profile.bloom !== false) c.addPass(this.refBloom = new RefBloomPass(this.camera, { lite: this.lite }));
     if (this.profile.smaa !== false) c.addPass(new SMAAPass(1, 1)); this.resize();
+    mark('pass composer');
     // compile every program before the first frame so walking never stutters on a new material
     this.onProgress('Compiling shaders', { phase: 'compile', done: 0, total: 1 });
     // every program is drawn into a linear half-float target (composer and floor mirror), which is a different shader
@@ -999,10 +1108,10 @@ export class RowPlayer {
         for (const o of byMat.get(m).meshes) { const k = (o.isInstancedMesh ? 'i' : 'm') + (o.matrixWorld.determinant() < 0 ? 'f' : ''); if (seen.has(k)) continue; seen.add(k);
           const q = o.isInstancedMesh ? new THREE.InstancedMesh(o.geometry, m, 1) : new THREE.Mesh(o.geometry, m); q.matrixAutoUpdate = false; q.matrixWorld.copy(o.matrixWorld); q.frustumCulled = false; q.renderOrder = o.renderOrder; px.add(q); }
         const prev = r.getRenderTarget(); r.setRenderTarget(this.composer.renderTarget1); r.debug.checkShaderErrors = true;
-        r.compile(px, this.camera, this.scene); r.debug.checkShaderErrors = false; r.setRenderTarget(prev); };
+        this.compileLit(px); r.debug.checkShaderErrors = false; r.setRenderTarget(prev); };
       const fbOf = new Map();
       const openOnFallbacks = async () => { for (const m of order.slice(i)) { const f = fallbackFor(m); fbOf.set(m, f); }
-        const fbs = [...new Set(fbOf.values())]; for (const f of fbs) { px.clear(); px.add(new THREE.Mesh(new THREE.BoxGeometry(), f)); const prev = r.getRenderTarget(); r.setRenderTarget(this.composer.renderTarget1); r.compile(px, this.camera, this.scene); r.setRenderTarget(prev); }
+        const fbs = [...new Set(fbOf.values())]; for (const f of fbs) { px.clear(); px.add(new THREE.Mesh(new THREE.BoxGeometry(), f)); const prev = r.getRenderTarget(); r.setRenderTarget(this.composer.renderTarget1); this.compileLit(px); r.setRenderTarget(prev); }
         if (LP) await linkWait(fbs);
         for (const [m, f] of fbOf) for (const o of byMat.get(m).meshes) o.material = f; opened = true; this.report.fallbackMaterials = fbs.length; mark('opened on fallbacks at program ' + i + '/' + order.length); };
       const loop = async () => {
@@ -1116,7 +1225,7 @@ export class RowPlayer {
       if (this.collisionFilter ? !this.collisionFilter(bb) : (center && bb.distanceToPoint(center) > radius)) return;   // only what can be reached on foot
       const g = o.geometry, p = g.attributes.position, idx = g.index;
       const n = idx ? idx.count : p.count; const arr = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) { v.fromBufferAttribute(p, idx ? idx.getX(i) : i).applyMatrix4(o.matrixWorld); arr.set([v.x, v.y, v.z], i * 3); }
+      for (let i = 0; i < n; i++) { v.fromBufferAttribute(p, idx ? idx.getX(i) : i).applyMatrix4(o.matrixWorld); arr[i * 3] = v.x; arr[i * 3 + 1] = v.y; arr[i * 3 + 2] = v.z; }
       parts.push(arr);
     });
     const total = parts.reduce((a, b) => a + b.length, 0); const all = new Float32Array(total); let off = 0; for (const a of parts) { all.set(a, off); off += a.length; }
@@ -1125,7 +1234,7 @@ export class RowPlayer {
     // floor finder: everything below 0.3 m
     const fparts = []; this.root.traverse(o => { if (!o.isMesh || o.isInstancedMesh) return; bb.setFromObject(o); if (bb.max.y > 0.3) return; if (this.collisionFilter ? !this.collisionFilter(bb) : (center && bb.distanceToPoint(center) > radius)) return;
       const gg = o.geometry, p = gg.attributes.position, idx = gg.index; const n = idx ? idx.count : p.count; const arr = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) { v.fromBufferAttribute(p, idx ? idx.getX(i) : i).applyMatrix4(o.matrixWorld); arr.set([v.x, v.y, v.z], i * 3); } fparts.push(arr); });
+      for (let i = 0; i < n; i++) { v.fromBufferAttribute(p, idx ? idx.getX(i) : i).applyMatrix4(o.matrixWorld); arr[i * 3] = v.x; arr[i * 3 + 1] = v.y; arr[i * 3 + 2] = v.z; } fparts.push(arr); });
     const ft = fparts.reduce((a, b) => a + b.length, 0); const fa = new Float32Array(ft); off = 0; for (const a of fparts) { fa.set(a, off); off += a.length; }
     const fg = new THREE.BufferGeometry(); fg.setAttribute('position', new THREE.BufferAttribute(fa, 3)); fg.computeBoundsTree();
     this.floorCollider = new THREE.Mesh(fg, new THREE.MeshBasicMaterial());
@@ -1264,7 +1373,7 @@ export class RowPlayer {
       if (list.length < 2) { after++;
         // a single mesh keeps its own geometry; skewed normals are fixed on a local copy the same way
         const o = list[0], F0 = globalThis.RR_FLAGS || {};
-        if (!F0.noflatfix && o.geometry.attributes.normal && !o.isInstancedMesh) { const gw = toFloatGeometry(o.geometry); gw.applyMatrix4(o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(gw); const bs = badNormalShare(gw); gw.dispose(); if (bs > 0.1) { let g = toFloatGeometry(o.geometry); g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('normal'); g.computeVertexNormals(); o.geometry = g; (this.report.flatNormals = this.report.flatNormals || []).length < 200 && this.report.flatNormals.push([o.userData.invName || o.name, +bs.toFixed(2), 's']); } }
+        if (!F0.noflatfix && o.geometry.attributes.normal && !o.isInstancedMesh) { const gw = toFloatGeometry(o.geometry); applyMatrixFast(gw, o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(gw); const bs = badNormalShare(gw); gw.dispose(); if (bs > 0.1) { let g = toFloatGeometry(o.geometry); g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('normal'); g.computeVertexNormals(); o.geometry = g; (this.report.flatNormals = this.report.flatNormals || []).length < 200 && this.report.flatNormals.push([o.userData.invName || o.name, +bs.toFixed(2), 's']); } }
         continue; }
       // meshopt-quantized exports store positions/normals/uvs as normalized Int16/Int8 in [-1,1] with the dequantize
       // scale in the node matrix; baking world space into those arrays clamps every vertex to +-1 (the merged group
@@ -1272,7 +1381,7 @@ export class RowPlayer {
       // mirrored objects (negative scale) are drawn by three with flipped face culling; once baked into world space that
       // flag is gone, so their triangle winding is reversed here or the outside faces are culled and the insides show
       const FN = globalThis.RR_FLAGS || {}; this.report.flatNormals = this.report.flatNormals || [];
-      const geos = list.map(o => { let g = toFloatGeometry(o.geometry); g.applyMatrix4(o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(g); for (const k of Object.keys(g.morphAttributes)) delete g.morphAttributes[k];
+      const geos = list.map(o => { let g = toFloatGeometry(o.geometry); applyMatrixFast(g, o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(g); for (const k of Object.keys(g.morphAttributes)) delete g.morphAttributes[k];
         // more than 10 % of the triangles with skewed normals: use the faces' own normals (flat; RR_FLAGS.noflatfix keeps them)
         if (!FN.noflatfix && g.attributes.normal) { const bs = badNormalShare(g); if (bs > 0.1) { g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('normal'); g.computeVertexNormals(); if (this.report.flatNormals.length < 200) this.report.flatNormals.push([o.userData.invName || o.name, +bs.toFixed(2)]); } }
         return g; });
@@ -1288,6 +1397,22 @@ export class RowPlayer {
   }
   // screen-size culling: objects that would cover less than about a pixel are skipped (nothing is simplified; a cup on a
   // table 30 m away is simply not drawn). The floor mirror additionally skips small things more than 12 m off.
+  // perf (Oct 16): renderer.compile(px, camera, this.scene) walks the whole scene (6000+ meshes) with traverseVisible on
+  // every call only to collect its lights (three r169 compile), once per material the gate issues (2562 calls, 1.7 s of
+  // main thread on the laptop). The render state stays this.scene's own; only its traverseVisible is replaced for the
+  // call by one over the scene's lights, in scene order, each visited only when it and every parent up to the scene is
+  // visible, which is what traverseVisible would hand to compile's light callback. The light list is taken again at most
+  // once per animation frame (and every 50 ms), so lights added, removed or toggled between ticks are seen.
+  // RR_FLAGS.perf = 0 keeps the plain call.
+  compileLit(px) { const r = this.renderer, sc = this.scene;
+    if (!PERF_ON()) { r.compile(px, this.camera, sc); return; }
+    const now = performance.now(), fr = globalThis.__rrGate ? globalThis.__rrGate.stat.frames : -1, c = this._litCache;
+    if (!c || c.fr !== fr || now - c.t > 50 || fr < 0) { const lights = []; sc.traverse(o => { if (o.isLight) lights.push(o); }); this._litCache = { fr, t: now, lights }; }
+    const L = this._litCache.lights;
+    sc.traverseVisible = function (cb) { for (const l of L) { let v = true; for (let o = l; o; o = o.parent) { if (o.visible === false) { v = false; break; } if (o === sc) break; } if (v && l.parent !== null) { let top = l; while (top.parent) top = top.parent; if (top === sc) cb(l); } } };
+    if (PERF_CHECK()) { const mine = [], ref = []; sc.traverseVisible(o => mine.push(o)); THREE.Object3D.prototype.traverseVisible.call(sc, o => { if (o.isLight) ref.push(o); });
+      const S = (globalThis.__perfcheck ||= {}), rr = (S.compileLights ||= { calls: 0, bad: 0 }); rr.calls++; if (mine.length !== ref.length || mine.some((o, i) => o !== ref[i])) rr.bad++; }
+    try { r.compile(px, this.camera, sc); } finally { delete sc.traverseVisible; } }
   prepareCulling() {
     let vid = 0; this.root.traverse(o => { if (o.isMesh) o.userData.vid = vid++; }); this.vidCount = vid;
     this.cullList = []; const sph = new THREE.Sphere();
@@ -1296,11 +1421,13 @@ export class RowPlayer {
       sph.copy(o.geometry.boundingSphere).applyMatrix4(o.matrixWorld); this.cullList.push({ o, c: sph.center.clone(), r: Math.max(sph.radius, 1e-3) }); });
   }
   cull(minPx, maxSmallDist = Infinity, maxDist = Infinity) {
+    // RR_FLAGS.smallfar = metres (ship fps test, off by default): in the main pass, objects under 0.25 m radius farther than this are skipped
+    if (maxSmallDist === Infinity && +((globalThis.RR_FLAGS || {}).smallfar || 0) > 0) { maxSmallDist = +globalThis.RR_FLAGS.smallfar; this._smallR = 0.25; } else this._smallR = 0.6;
     if (!this.cullList) return; const cam = this.camera.position;
     const k = (this.renderer.domElement.height / 2) / Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
     const ready = this.readyMats;
     const pvs = this.pvsActive;
-    for (const e of this.cullList) { const d = Math.max(0.1, e.c.distanceTo(cam) - e.r); e.o.visible = !e.o.userData.rrHide && (!pvs || pvs.has(e.o.userData.vid) || e.o.material.transparent) && (e.r / d) * k >= minPx && (e.r > 0.6 || d < maxSmallDist) && d < maxDist && (!ready || ready.has(e.o.material)); }
+    for (const e of this.cullList) { const d = Math.max(0.1, e.c.distanceTo(cam) - e.r); e.o.visible = !e.o.userData.rrHide && (!pvs || pvs.has(e.o.userData.vid) || e.o.material.transparent) && (e.r / d) * k >= minPx && (e.r > this._smallR || d < maxSmallDist) && d < maxDist && (!ready || ready.has(e.o.material)); }
   }
   setPVS(zones) { this.pvsZones = zones.map(z => ({ c: z.c, r: z.r, ids: new Set(z.ids) })); this.pvsKey = null; }
   updatePVS() {
@@ -1325,7 +1452,7 @@ export class RowPlayer {
   }
   render() { this.camera.updateMatrixWorld(); this.updatePVS();
     // RR_FLAGS.mirrorfar (ship speed, side copy, default off): the floor mirror pass skips objects farther than this many metres
-    if (this.floor) { this.cull(2.5, 12, +((globalThis.RR_FLAGS || {}).mirrorfar || 0) || Infinity); } if (this.lamps) this.lamps.update(this.camera.position); if (this.cove) this.cove.update(this.camera.position); if (this.floor && this.mirrorReady !== false) this.floor.update(this.renderer, this.scene, this.camera); this.cull(0.75);
+    if (this.floor) { this.cull(2.5, 12, +((globalThis.RR_FLAGS || {}).mirrorfar || 0) || Infinity); } if (this.lamps) this.lamps.update(this.camera.position); if (this.cove) this.cove.update(this.camera.position); if (this.floor && this.mirrorReady !== false && (!+((globalThis.RR_FLAGS || {}).mirrorhalf || 0) || ((this._mf = (this._mf || 0) + 1) % 2) === 1 || this._settled)) this.floor.update(this.renderer, this.scene, this.camera); this.cull(0.75);
     if (this.composer && this.postReady === false) this.cheapRender(); else this.composer ? this.composer.render() : this.renderer.render(this.scene, this.camera); }
   // gate agent: until the post chain programs report linked, draw the scene into the composer's first target (the
   // target every real program was compiled for, so no draw time compile) and copy it to the screen with one tiny
