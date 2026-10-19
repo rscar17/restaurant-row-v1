@@ -61,14 +61,28 @@ if (S && rr && tabs) {
   const holdWhole = () => frame('whole');
   const showWhole = () => { const M = S.modes; if (frame('whole') && M.overview) M.overview({ intro: false }); };
   const showTop = () => { const M = S.modes; if (frame('top') && M.overview) M.overview({ intro: false }); };
+  // v52 free walk pad (bottom left, styled by v52's .v3-freepad CSS): press and hold an arrow to walk; it drives the player's
+  // move vector, the same input the touch stick uses, so keyboard (W A S D, arrows) and drag-to-look keep working beside it
+  const pad = document.createElement('div'); pad.className = 'v3-freepad'; pad.hidden = true; pad.setAttribute('aria-label', 'Free walking controls');
+  const held = new Set(); const AX = { w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0] };
+  const apply = () => { const P = S.player; if (!P || !P.move) return; let x = 0, y = 0; for (const k of held) { x += AX[k][0]; y += AX[k][1]; } P.move.set(Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y))); P.invalidate && P.invalidate(2); };
+  for (const [label, key, sym] of [['Move forward', 'w', '\u2191'], ['Move left', 'a', '\u2190'], ['Move backward', 's', '\u2193'], ['Move right', 'd', '\u2192']]) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = sym; b.setAttribute('aria-label', label); b.dataset.key = key;
+    b.addEventListener('pointerdown', (e) => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ } held.add(key); apply(); });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, () => { held.delete(key); apply(); });
+    pad.append(b); }
+  if (stage) stage.append(pad);
   const order = CARDS.map(c => c.id);
   const ui = () => {
     const sel = own.find(b => b.getAttribute('aria-selected') === 'true'); const t = sel ? sel.dataset.rrTab : 'map';
     const M = S.modes, mode = M && M.mode; const on3d = t !== 'map' && S.state.ready;
     // the automatic open (and its select('3d')) lands on the modes' rest view: show the whole row instead, once, as v52 opens
     if (t === '3d' && S.state.swapAt && !ui.opened) { ui.opened = true; if (M) M._v52top = false; }
-    stage && stage.classList.toggle('v52-3d', !!on3d && (t === '3d' || order.includes(t)));
+    const free = t === 'free';
+    stage && stage.classList.toggle('v52-3d', !!on3d && (t === '3d' || order.includes(t) || free));
     const entrance = order.includes(t);
+    if (pad) pad.hidden = !(free && on3d);
+    if (free) { if (stamp) stamp.innerHTML = '<strong>Free walk</strong>Explore the corridor'; if (hint) hint.textContent = 'WASD / arrows to move' + dot + 'Drag to look' + dot + 'Use the arrow pad on touch'; if (ctl) ctl.querySelectorAll('[data-a]').forEach(b => { b.hidden = true; }); return; }
     if (stamp) stamp.innerHTML = entrance ? '<strong>' + (CARDS.find(c => c.id === t).name) + '</strong>Entrance view' : '<strong>Restaurant Row / ' + (M && M._v52top ? 'Top view' : 'Overview') + '</strong>Drag to explore';
     if (hint) hint.textContent = entrance ? 'Drag to look around' + dot + 'Switch to Free walk to explore' : 'Drag to orbit' + dot + 'Shift + drag to pan' + dot + 'Tap an entrance';
     if (ctl) ctl.querySelectorAll('[data-a]').forEach(b => { const a = b.dataset.a; b.hidden = entrance ? (a === 'top' || a === 'reset') : (a === 'prev' || a === 'next');
@@ -94,6 +108,8 @@ if (S && rr && tabs) {
       const hf = 2 * Math.atan(Math.tan(base * Math.PI / 360) * 16 / 9), vf = Math.min(95, 2 * Math.atan(Math.tan(hf / 2) / a) * 180 / Math.PI);
       return { ...src, fov: vf }; };
   };
+  // the hint bar sits between the bottom button rows: below 900 px of stage width it would run under them, so it hides there
+  if (stage && hint && 'ResizeObserver' in window) new ResizeObserver(() => { hint.style.display = stage.clientWidth < 900 ? 'none' : ''; }).observe(stage);
   const waitModes = setInterval(() => { if (S.modes && S.modes.D && S.modes.D.overview) { holdWhole(); clearInterval(waitModes); v52modes(S.modes); S.modes.on('mode', ui); } }, 50);
   new MutationObserver(ui).observe(sec, { subtree: true, attributes: true, attributeFilter: ['aria-selected', 'data-rr-ready'] });
   ui();
