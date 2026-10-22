@@ -36,10 +36,11 @@ function lmCopy(src, tex, scale) {
   const m = src.clone(); m.userData = { ...src.userData }; if (src.defines) m.defines = { ...src.defines };   // main 07:0x: own userData copy; sharing it flagged the unbaked original too (Milos reeded oak). fixlm 07:3x: the defines copy (USE_UV for Blender procedural graphs, which read vUv) had slipped into this comment; without it ~190 [lm] programs failed to compile and drew nothing (Milos oak see-through, sign, dome)
   const ob = src.onBeforeCompile, ok = src.customProgramCacheKey;
   m.lightMap = tex; m.lightMapIntensity = 1;
+  const lc = src.userData?.roomObjCal?.lmc;   // milosint Oct 22: an rr2_rooms object entry may give a constant baked light (linear rgb) where the chart is broken (Milos cloths: 118k face drapes in 2 px islands = pixel noise); until its fresh bake
   m.onBeforeCompile = function (sh, r) { if (ob) ob.call(this, sh, r); sh.uniforms.uLmScale = { value: scale };
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uLmScale;')
-      .replace('#include <opaque_fragment>', '{ vec4 rrLmT = texture2D( lightMap, vLightMapUv ); outgoingLight = diffuseColor.rgb * rrLmT.rgb * rrLmT.a * 8.0 * uLmScale + totalEmissiveRadiance' + (+(F().lmspec ?? 1) ? ' + reflectedLight.indirectSpecular' : '') + '; }\n#include <opaque_fragment>'); };
-  m.customProgramCacheKey = function () { return (ok ? ok.call(this) : '') + '|rrlm' + (+(F().lmspec ?? 1) ? 's' : ''); };   // main 07:0x: env reflections kept on baked surfaces (lmspec=0 drops them)
+      .replace('#include <opaque_fragment>', '{ vec4 rrLmT = ' + (lc ? 'vec4(' + lc.map(v => (+v).toFixed(4)).join(', ') + ', 0.125)' : 'texture2D( lightMap, vLightMapUv )') + '; outgoingLight = diffuseColor.rgb * rrLmT.rgb * rrLmT.a * 8.0 * uLmScale + totalEmissiveRadiance' + (+(F().lmspec ?? 1) ? ' + reflectedLight.indirectSpecular' : '') + '; }\n#include <opaque_fragment>'); };
+  m.customProgramCacheKey = function () { return (ok ? ok.call(this) : '') + '|rrlm' + (lc ? 'c' + lc.join(',') : '') + (+(F().lmspec ?? 1) ? 's' : ''); };   // main 07:0x: env reflections kept on baked surfaces (lmspec=0 drops them)
   m.name = (src.name || 'm') + ' [lm]'; m.userData.lmBaked = true; return m;
 }
 

@@ -17,6 +17,7 @@ import { RefBloomPass } from './rr2_refbloom.js';
 import { computeBoundsTree, acceleratedRaycast, MeshBVH } from 'three-mesh-bvh';
 import { compileAndApply, loadArea, fixObjectCoords } from './rr2_scene.js';
 import { signfixImages, signfixArea, signfixLight } from './rr2_signfix.js';
+import { frontsfixExtra, frontsfixArea } from './rr2_frontsfix.js';
 import { mapAlphaCoverage, progcutMerge } from './blender_material.js';
 import { variantGroupKey, assignCaptureLighting, IBL_DIFFUSE, IBL_UP, IBL_DOWN, IBL_UP_TINT, loadSHField, unifyVariants } from './rr2_probes.js';
 import { LightPool } from './rr2_lights.js';
@@ -358,7 +359,7 @@ export class RowPlayer {
     });
     for (const { url, farMin, priority, meta, area: areaP } of jobs) {
       this.onProgress(`Loading area ${++i} of ${areas.length}`, { phase: 'areas', done: i - 1, total: areas.length });
-      const [inv, extra, images, objmat] = await meta; if (images) extra.images = images; signfixImages(extra);
+      const [inv, extra, images, objmat] = await meta; if (images) extra.images = images; signfixImages(extra); frontsfixExtra(extra, this.report);   // rr2_frontsfix.js: Delmonico, Donutique graphs
       for (const l of extra.lights || []) if (!this.blLights.has(l.name)) this.blLights.set(l.name, l);
       Object.assign(this.blMats ||= {}, extra.materials || {});
       const area = await areaP; mark('geometry ' + url);
@@ -454,6 +455,7 @@ export class RowPlayer {
         (this.report.endfix2 ||= {}).voltblk = ((this.report.endfix2 || {}).voltblk || 0) + nv; }
       fixObjectCoords(area, inv, objmat, this.report);
       signfixArea(area, inv, this.report);   // RR_FLAGS.signfix: kiosk screen U flip, DELMONICO letter spacing
+      frontsfixArea(area, inv, this.report);   // rr2_frontsfix.js: Yardbird beams and shutters, Donutique stone, halo, threshold
       // Cycles ignores Blender's per-material Backface Culling flag, glTF turns it into single-sided materials. Several
       // imported ceilings (rotunda Mesh_16xx) face upward with culling on, so the viewer saw through them where the
       // Cycles reference shows a ceiling. Draw every opaque surface two-sided, as Cycles does.

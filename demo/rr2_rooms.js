@@ -131,12 +131,14 @@ export const ROOM_MATCAL_M74 = {
 // RR_FLAGS.noobjcal turns the table off.
 const MIL_BOX = [-17.5, -16.0, 13.0, 25.0];
 export const ROOM_OBJCAL_M78 = {
-  Mesh_2262: { room: 'milos', k: [0.4, 0.4, 0.4], box: MIL_BOX },      // back bar shelving (mil_stool_fabric): ref 35 to 69 against 97 to 143, 0.31
-  Mesh_2249: { room: 'milos', k: [0.55, 0.55, 0.55], box: MIL_BOX },   // back and side walls (Material_110), 0.54
+  Mesh_2262: { room: 'milos', k: [1, 1, 1], col: [0.56, 0.56, 0.54], box: MIL_BOX },   // milosint Oct 22: read as a blank dark grey band across the back; light grey panels like the photos' back wall (was mil_stool_fabric 0.2 0.23 0.26 at k 0.4)
+       // back bar shelving (mil_stool_fabric): ref 35 to 69 against 97 to 143, 0.31
+  Mesh_2249: { room: 'milos', k: [1, 1, 1], col: [0.84, 0.79, 0.69], box: MIL_BOX },   // milosint Oct 22: shell walls and ceiling (Material_110, peach plaster photo) read warm cream like Ryan's photos; was k 0.55 (fit to the old dark 360s)
   Mesh_2253: { room: 'milos', k: [0.65, 0.65, 0.65], box: MIL_BOX },   // dark wood trim (Material_107), 0.62
-  Mesh_2265: { room: 'milos', k: [0.65, 0.65, 0.65], box: MIL_BOX },   // terracotta under the rack, 0.63
+  Mesh_2265: { room: 'milos', k: [2.2, 2.2, 2.2], col: [0.84, 0.80, 0.71], flat: 1, box: MIL_BOX },   // milosint Oct 22: the recess walls around the round downlight cans read as dark brown rings; cream like the ceiling (was terracotta, k 0.65)
+  Mesh_2248: { room: 'milos', col: [0.62, 0.47, 0.32], flat: 1, planks: [0.19, 1.6], box: MIL_BOX },   // milosint Oct 22: Milos floor, the oak veneer photo tiled into metre wide swirls; light oak planks about 0.19 m (milos_front_straight_pots_ryan_1022.webp)
   Mesh_1647: { k: [1.35, 1.35, 1.35], box: MIL_BOX },   // no room gate: its bbox centre lands 1 cm outside the Milos mask (m80/m81: 0 hits); the shader still limits it to Milos cells   // white west wall (Material_617), 1.38
-  Mesh_352: { room: 'milos', k: [1.4, 1.4, 1.4], box: MIL_BOX },       // white marble round bar front, 1.49
+  Mesh_352: { room: 'milos', k: [1.4, 1.4, 1.4], col: [0.80, 0.80, 0.78], box: MIL_BOX },       // white marble round bar front, 1.49; milosint Oct 22: clean white (its noise marble drew horizontal streaks)
   mil_barpot0: { room: 'milos', k: [1.2, 1.2, 1.2], box: MIL_BOX }, mil_barpot1: { room: 'milos', k: [1.2, 1.2, 1.2], box: MIL_BOX }, // m80: 1.4/1.6 overshot at B082 nz // stone urns 1.49 / 2.0
   // endfix (fix86, Oct 14): Mesh_240, the 20.7 m photo quad behind the Milos back bar (Material_115: Image_14 feeds base
   // colour and emission 0.42). The room gain leaves emission untouched and Material_115 has no material entry, so it kept
@@ -145,6 +147,29 @@ export const ROOM_OBJCAL_M78 = {
   // Uncalibrated first guess, flags mil240e (default 0.2) and mil240k (default 1)
   ...((globalThis.RR_FLAGS || {}).endfix ? { Mesh_240: { room: 'milos', k: Array(3).fill(+((globalThis.RR_FLAGS || {}).mil240k ?? 1)), e: +((globalThis.RR_FLAGS || {}).mil240e ?? 0.2), box: MIL_BOX } } : {}),
 };
+// milosint (Oct 22, Ryan 08:07 "the inside of milos is a disaster"): Milos pieces by name pattern, for the colours of Ryan's
+// Venetian photos (milos_interior_*.webp): clean white linen cloths (the noise colour and fine bump read as a blotchy
+// pattern), filled in from the photos. [regex on the Blender object name, entry as above]; RR_FLAGS.nomilint turns it off
+export const ROOM_OBJCAL_RE = (globalThis.RR_FLAGS || {}).nomilint ? [] : [
+  [/^((md\d+_)?mi_cloth\d+|mil_bt\d+)$/, { room: 'milos', col: [0.80, 0.79, 0.76], flat: 1, lmc: [1.0, 0.96, 0.9] }],   // lmc: rr2_lightmap.js constant light, their lightmap charts are pixel noise; white linen (Material_740 is cream 0.80 0.75 0.64 with noise)
+  [/^r135_ceil163$/, { room: 'milos', k: [3.6, 3.6, 3.6], col: [0.88, 0.87, 0.83], flat: 1 }],   // the dining room ceiling plane (z 3.3, painted plaster photo, unbaked): warm cream like the photos
+  [/^Path_69$/, { clipTop: ['Path_70', 0.004] }], [/^Path_(77|80)$/, { clipTop: ['Path_72', 0.004] }],
+  [/^mil_stool\d+_seat$/, { room: 'milos', col: [0.30, 0.38, 0.44] }],   // bar stools: pale blue grey upholstery (round bar photo), the 0.55 0.68 0.78 baked near white
+  [/(Back|Seating) coushion$/, { room: 'milos', col: [0.36, 0.45, 0.52] }],   // pale blue grey upholstered chairs (photo about sRGB 160 175 185)
+];
+// milosint (Oct 22, Ryan 08:58): pieces taken out of the scene at load, by Blender object name. r9zz2_mil_understrip is a white
+// glow strip lying on the floor along the round bar (the photos show the bar FRONT lit, not the floor); the mil_*_rope rings
+// of the restored amphorae came out about 2.8 m wide and up to 0.85 m under the floor (the jar bodies mil_pithos, mil_pithosT,
+// mil_jarS, mil_pithosL are the right 1 m size and stay). RR_FLAGS.nomilhide keeps them.
+export const ROOM_HIDE_RE = (globalThis.RR_FLAGS || {}).nomilhide ? null : /^(r9zz2_mil_understrip|mil_(pithos|pithosT|pithosL|jarS)_rope\d+)$/;
+// milosint (Oct 22 09:5x, reviewer on cand_0940): the 'o' glyphs of the fascia lettering (Path_69 in Milos, Path_77 and
+// Path_80 in estiatorio) carry a thin sliver that rises above the letter and reads as an accent ("Milós") from 30 degrees
+// either side. clipTop: [reference letter, pad m] discards fragments above that letter's top (the 's' of the same word)
+// Moves (Blender metres, viewer only): mil_barpot1 and its flowers stood 1.4 m up at the west end with nothing under
+// them (reviewer: floating grey pot in front of the blue painting); set on the floor as a floor planter.
+// Low tableware: r9z*_milos_* glasses, plates, mugs and bowls lying on the floor (top under 0.45 m) are taken out.
+export const ROOM_MOVE = (globalThis.RR_FLAGS || {}).nomilhide ? {} : { mil_barpot1: [0, 0, -1.4], mil_barflowers1: [0, 0, -1.4] };
+export const ROOM_LOW_RE = (globalThis.RR_FLAGS || {}).nomilhide ? null : /^r9z[a-z]*_milos_\d+_(Wine Glass|dinner plate|salad plate|mug|soup|Glass)/;
 const ROOM_NZ = 8;
 const clampT = (v) => Math.min(1.18, Math.max(0.85, v));
 export class RoomLighting {
@@ -168,7 +193,7 @@ export class RoomLighting {
   // gains and tints per cell; corridor cells hold 1 (and a top of 99 m), so filtering at a room border fades the gain
   setCalibration(cal) {
     this.cal = cal; const h = THREE.DataUtils.toHalfFloat, G = this.uG.value.image.data, T = this.uT.value.image.data;
-    const FF = globalThis.RR_FLAGS || {}, dExp = +(FF.mildepth ?? 1.3), rackK = +(FF.milrack ?? 1), milX = +(FF.milx ?? -6); // m76 audit: rack shadow drew a dark block (off); west dining room x < -6 is bright in the 360s
+    const FF = globalThis.RR_FLAGS || {}, dExp = +(FF.mildepth ?? 0)   /* milosint Oct 22: was 1.3 (old 360s had a dark back room); the real room is evenly bright (milos_interior_*.webp) */, rackK = +(FF.milrack ?? 1), milX = +(FF.milx ?? -6); // m76 audit: rack shadow drew a dark block (off); west dining room x < -6 is bright in the 360s
     for (let c = 0; c < this.W * this.H; c++) { const k = this.id[c]; const name = k ? this.names[k - 1] : null; const r = name && cal[name];
       let g = r ? r.g : [1, 1, 1]; const t = r ? r.t.map(clampT) : [1, 1, 1], top = r ? this.masks[name].ztop + 0.6 : 99;
       if (name === 'milos' && r) {
@@ -218,11 +243,19 @@ export class RoomLighting {
   }
   patchAll(root) {
     const done = new Set(); let n = 0, cells = 0, nObj = 0;
+    let nHide = 0; if (ROOM_HIDE_RE) { const gone = []; root.traverse(o => { if (o.isMesh && ROOM_HIDE_RE.test(o.userData.invName || o.name)) gone.push(o); });
+      for (const o of gone) { o.visible = false; o.removeFromParent(); nHide++; } }
+    let nMove = 0, nLow = 0; { const byN = new Map(), bx = new THREE.Box3(), low = []; root.updateMatrixWorld(true);
+      root.traverse(o => { if (!o.isMesh) return; const nm = o.userData.invName || o.name; if (!byN.has(nm)) byN.set(nm, o);
+        const mv = ROOM_MOVE[nm]; if (mv) { o.position.x += mv[0]; o.position.y += mv[2]; o.position.z -= mv[1]; o.updateMatrixWorld(true); nMove++; }
+        if (ROOM_LOW_RE && ROOM_LOW_RE.test(nm)) { bx.setFromObject(o); if (!bx.isEmpty() && bx.max.y < 0.45) low.push(o); } });
+      for (const o of low) { o.visible = false; o.removeFromParent(); nLow++; }
+      for (const [, ent] of ROOM_OBJCAL_RE) if (ent.clipTop) { const r = byN.get(ent.clipTop[0]); if (r) { bx.setFromObject(r); ent.clipY = bx.max.y + ent.clipTop[1]; } } }
     const clip = +((globalThis.RR_FLAGS || {}).roomclip ?? 0) ? this.clipToObjects(root) : null;
     // per object entries: a clone of the material for the matching meshes (one clone per material and entry)
     if (Object.keys(this.objCal).length) { const clones = new Map(), bb = new THREE.Box3(), cc = new THREE.Vector3(); root.updateMatrixWorld(true);
       root.traverse(o => { if (!o.isMesh || Array.isArray(o.material) || !o.material || !o.material.isMeshStandardMaterial) return;
-        const nm = o.userData.invName || o.name, ent = this.objCal[nm]; if (!ent) return; const src = o.material;
+        const nm = o.userData.invName || o.name, ent = this.objCal[nm] || (ROOM_OBJCAL_RE.find(([re]) => re.test(nm)) || [])[1]; if (!ent) return; const src = o.material;
         if ((src.transmission ?? 0) > 0 || src.userData.glassEmit || (src.transparent && !ent.tr)) return;
         // endfix: a piece of an object split for its size gates on the whole object's centre (rr2_player.js splitC), so
         // every piece keeps the entry (pieces whose own centre fell outside the Milos mask lost it)
@@ -236,7 +269,7 @@ export class RoomLighting {
     root.traverse(o => { if (!o.isMesh) return; for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
       if (!m || done.has(m) || !m.isMeshStandardMaterial || (m.transparent && !m.userData.roomObjCal) || (m.transmission ?? 0) > 0 || m.userData.glassEmit) continue; done.add(m); this.patch(m); n++; } });
     for (const v of this.id) if (v) cells++;
-    return { materials: n, rooms: this.names.length, cells, grid: [this.W, this.H], objMeshes: nObj, objCal: this.objCalHits, ...(clip ? { roomclip: clip } : {}) };
+    return { hidden: nHide, moved: nMove, lowTableware: nLow, clipY: ROOM_OBJCAL_RE.filter(([, e]) => e.clipTop).map(([, e]) => e.clipY ?? null), materials: n, rooms: this.names.length, cells, grid: [this.W, this.H], objMeshes: nObj, objCal: this.objCalHits, ...(clip ? { roomclip: clip } : {}) };
   }
   patch(material) {
     if (material.userData.roomLit) return; material.userData.roomLit = true;
@@ -263,6 +296,23 @@ export class RoomLighting {
       sh.uniforms.uRoomZB = { value: Object.assign(Array.from({ length: ROOM_NZ }, (_, i) => new THREE.Vector4(...(zs[i] ? zs[i].slice(0, 4) : [1, 1, -1, -1]))), { _rrVer: 0 }) };   // constant (rr2_look array upload cache)
       sh.uniforms.uRoomZK = { value: Array.from({ length: ROOM_NZ }, (_, i) => new THREE.Vector3(...(zs[i] ? zs[i].slice(4, 7) : [1, 1, 1]))) };
       sh.uniforms.uRoomZG = { value: new THREE.Vector3(...(mc && mc.zg ? mc.zg : [-1e4, 1e4, 0])) };
+      // milosint (Oct 22): an object entry may set its base colour (col, linear rgb, replaces the Blender graph's colour, so a
+      // photo or noise texture stops showing) and drop the graph's bump (flat: 1, the geometric normal); before the lights,
+      // so baked copies (rr2_lightmap.js lmCopy keeps this onBeforeCompile) show the same colour
+      if (mc && (mc.col || mc.flat || mc.planks || mc.clipY != null)) { let pre = '';
+        if (mc.clipY != null) pre += 'if (vRoomWP.y > ' + (+mc.clipY).toFixed(4) + ') discard;\n';
+        if (mc.col) { sh.uniforms.uRoomCol = { value: new THREE.Vector3(...mc.col) }; pre += 'diffuseColor.rgb = uRoomCol;\n'; sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec3 uRoomCol;'); }
+        if (mc.flat) pre += 'normal = nonPerturbedNormal;\n';
+        // planks: [width, length] m, light oak boards along Blender y (the photos), per board tone, thin seams, fine grain; on col
+        if (mc.planks) { const [pw, pl] = mc.planks.map(v => (+v).toFixed(3)); pre += `{ vec2 pp = vec2(vRoomWP.x, -vRoomWP.z); float prow = floor(pp.x / ${pw});
+          float poff = fract(sin(prow * 12.9898) * 43758.5453) * ${pl}; float pcol = floor((pp.y + poff) / ${pl});
+          float ph = fract(sin(dot(vec2(prow, pcol), vec2(12.9898, 78.233))) * 43758.5453);
+          float pex = min(fract(pp.x / ${pw}), 1.0 - fract(pp.x / ${pw})) * ${pw};
+          float pey = min(fract((pp.y + poff) / ${pl}), 1.0 - fract((pp.y + poff) / ${pl})) * ${pl};
+          float pseam = smoothstep(0.0, 0.0035, pex) * smoothstep(0.0, 0.004, pey);
+          float pgr = 0.96 + 0.04 * sin(pp.x * 260.0 + sin(pp.y * 3.1 + ph * 6.0) * 2.5 + ph * 20.0);
+          diffuseColor.rgb *= (0.88 + 0.2 * ph) * pgr * mix(0.62, 1.0, pseam); }\n`; }
+        sh.fragmentShader = sh.fragmentShader.replace('#include <lights_physical_fragment>', pre + '#include <lights_physical_fragment>'); }
       // glow mask (sugmask): identity edges and factors for every other material
       if (SUG_MASK_ON) { sh.uniforms.uRoomGM = { value: new THREE.Vector4(...(mc && mc.gm ? mc.gm : [-2e4, -1e4, -2e4, -1e4])) };
         sh.uniforms.uRoomGL = { value: new THREE.Vector3(...(mc && mc.gl ? mc.gl : [1, 1, 1])) }; }
@@ -313,7 +363,7 @@ ${(globalThis.RR_FLAGS || {}).endfix ? `      // endfix (end agent 2, Oct 14): s
   }
   #include <aomap_fragment>`);
     };
-    material.customProgramCacheKey = () => (prevKey ? prevKey.call(material) : '') + '|room2' + (SUG_MASK_ON ? 'gm' : '') + (((globalThis.RR_FLAGS || {}).ceilfix === true ? 15 : +((globalThis.RR_FLAGS || {}).ceilfix) || 0) & 1 ? 'cf' : '') + ((globalThis.RR_FLAGS || {}).endfix ? 's' : '');
+    material.customProgramCacheKey = () => (prevKey ? prevKey.call(material) : '') + '|room2' + (SUG_MASK_ON ? 'gm' : '') + (((globalThis.RR_FLAGS || {}).ceilfix === true ? 15 : +((globalThis.RR_FLAGS || {}).ceilfix) || 0) & 1 ? 'cf' : '') + ((globalThis.RR_FLAGS || {}).endfix ? 's' : '') + ((material.userData.roomObjCal && (material.userData.roomObjCal.col || material.userData.roomObjCal.flat || material.userData.roomObjCal.planks || material.userData.roomObjCal.clipY != null)) ? '|mc' + (material.userData.roomObjCal.col || []).join(',') + (material.userData.roomObjCal.flat ? 'f' : '') + (material.userData.roomObjCal.planks ? 'p' + material.userData.roomObjCal.planks.join(',') : '') + (material.userData.roomObjCal.clipY != null ? 'y' + material.userData.roomObjCal.clipY.toFixed(4) : '') : '');
     material.needsUpdate = true;
   }
 }
