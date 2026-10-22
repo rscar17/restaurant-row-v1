@@ -33,6 +33,7 @@ import { CaptureCache, queuedFetch, PRI, stats as assetStats, netQueue, memleanS
 import { pickTier, DprGovernor } from './rr2_tier.js';
 import { ProgramGate } from './rr2_gate.js';
 import { lmOn, loadLightmaps, applyLightmaps } from './rr2_lightmap.js';
+import { delmint } from './rr2_delmint.js';   // agent delmint Oct 22: Delmonico vaults, chandeliers, stone room, cream walls, carpet
 // The exact look of Ryan's Cycles 360s (meta.json "grade"): 0.75 x Khronos PBR Neutral at -0.35 EV + 0.25 x AgX with the
 // Punchy look at -0.25 EV, mixed in display space. Checked against Blender 5.2's own OCIO processors (PyOpenColorIO in
 // Blender, 209k linear pixels sampled from all 34 captures): the Neutral part matches to 0.33 of 255; the AgX part is an
@@ -838,6 +839,8 @@ export class RowPlayer {
     // hook: rr2_modes tags units and ceilings before groups merge (after the crack backing, so its copies carry the same tags)
     if (this.beforeMerge) this.beforeMerge(this.root);
     mark('pass beforeMerge');
+    // agent delmint Oct 22: Delmonico from Ryan's photos (rr2_delmint.js); before the lightmaps so the cream patch and the chair copies are baked like the rest; RR_FLAGS.delmint=0 turns it off
+    try { this.report.delmint = delmint(this); mark('delmint'); } catch (e) { (this.report.errors ||= []).push('delmint: ' + e.message); }
     // main 03:4x (ship found it): lightmaps go on BEFORE mergeStatic, which folds meshes into nameless 'merged:<material>' meshes;
     // baked copies are cached per source material and atlas, so the merge key keeps baked with baked of the same atlas
     if (lmOn()) { try { this.lmData ||= await (this.lmPromise || loadLightmaps((globalThis.RR_FLAGS || {}).lmurl || 'data/lm/lm.json')); this.report.lightmap = applyLightmaps(this.root, this.lmData); mark('lightmaps applied'); } catch (e) { (this.report.errors ||= []).push('lightmap: ' + e.message); } }

@@ -56,7 +56,7 @@ export const SHIP_FLAGS = {
   // m95 base (idn=0.55 of that run is the iblDown player option, see SHIP_PLAYER)
   wallup: 1,
   wallupSkip: '^(mat_m2_rail|rr_beige_pier|mil_oak_reeded|rr_bead|rr_del_plaster|rr_del_cove_wash|rr_label_|mil_ceiling|del_plank|rot_drum|sugmv_|sug_ch_|gjl_rust|rot_rustband)',
-  sugmask: 1, sugdark: 1, idnmat: 1, winefix: 1, glassfix: 2, rotramp: 1, delmfix: 1, delmk: 0.15, storefix: 1,
+  sugmask: 1, sugdark: 1, idnmat: 1, winefix: 1, glassfix: 2, rotramp: 1, delmfix: 1, delmk: 0.15, storefix: 1, storefixre: '^mt_glass(\\.\\d+)?$',   /* cotegj Oct 22: Gjelina's storefront (gjl_glass_clear) no longer at 0.4 (fit to the old smoky 360s); Paul's photos show clear glass and a bright room */
   lowres: 2, lightloop: 1, noisespec: 1, capworker: 1, warm: 1,
   // Oct 14
   fasciafill: 1, dedupe: 1, oldpane: 1, lowglass: 1, lowglassbay: 1, floatfix2: 1, floatfix2skip: 'posts,shelf',

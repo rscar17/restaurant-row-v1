@@ -23,9 +23,13 @@ export const ROOM_GROUPS = {
 // renders near black). Nomikai had no pixels behind glass and stays at 1. [wall, ceiling, floor], tint (luminance about 1).
 // Valid for that config only: refit after any change of interiorK, lights, iblDiffuse, iblDown, the cove constant
 // emitters or the storefront glass (agent_interiors/tools: fitk3.py, classgain_rt3.py, cv_rt3.py on the new run).
+// cotegj (Oct 22): Gjelina [wall, ceiling, floor] gains; RR_FLAGS.gjg = 'w,c,f' overrides
+const GJ_G = (() => { const s = (globalThis.RR_FLAGS || {}).gjg; const v = s ? String(s).split(',').map(Number) : null; return v && v.length === 3 && v.every(isFinite) ? v : [1.9, 4, 1.25]; })();
 export const ROOM_CAL_M54 = {
-  delmonico: { g: [0.839, 0.589, 0.656], t: [1.018, 1.001, 0.935] },
-  gjelina: { g: [0.916, 4, 0.438], t: [0.948, 0.998, 1.168] },
+  // agent delmint Oct 22: Ryan's Delmonico photos (IMG_5477 to 5513) show bright cream walls and white vaults; the m54 fit (0.839, 0.589, 0.656) was
+  // tuned to the old dark 360s and browned every live lit Delmonico piece (ceiling 0.59). Unbaked pieces only; baked ones take the lightmap.
+  delmonico: { g: [1.1, 0.9, 0.85], t: [1.0, 0.99, 0.96] },
+  gjelina: { g: GJ_G, t: [0.948, 0.998, 1.168] },   // cotegj Oct 22: was [0.916, 4, 0.438] (fit to the old dark 360s); Paul's photos IMG_1182 / IMG_1200 show a bright warm room through the glass
   matteos: { g: [0.692, 1.616, 0.63], t: [0.997, 1.001, 0.996] },
   milos: { g: [1.545, 1.415, 1.586], t: [0.945, 1.007, 1.093] },
   sugarcane: { g: [0.463, 3.418, 0.703], t: [0.946, 1.019, 0.969] },
@@ -135,10 +139,11 @@ export const ROOM_OBJCAL_M78 = {
        // back bar shelving (mil_stool_fabric): ref 35 to 69 against 97 to 143, 0.31
   Mesh_2249: { room: 'milos', k: [1, 1, 1], col: [0.84, 0.79, 0.69], box: MIL_BOX },   // milosint Oct 22: shell walls and ceiling (Material_110, peach plaster photo) read warm cream like Ryan's photos; was k 0.55 (fit to the old dark 360s)
   Mesh_2253: { room: 'milos', k: [0.65, 0.65, 0.65], box: MIL_BOX },   // dark wood trim (Material_107), 0.62
-  Mesh_2265: { room: 'milos', k: [2.2, 2.2, 2.2], col: [0.84, 0.80, 0.71], flat: 1, box: MIL_BOX },   // milosint Oct 22: the recess walls around the round downlight cans read as dark brown rings; cream like the ceiling (was terracotta, k 0.65)
+  Mesh_2265: { room: 'milos', k: [1.6, 1.6, 1.6], col: [0.86, 0.84, 0.78], plain: 1, box: MIL_BOX },   // milosint Oct 22: the recess walls around the round downlight cans read as dark brown rings; cream like the ceiling (was terracotta, k 0.65)
   Mesh_2248: { room: 'milos', col: [0.62, 0.47, 0.32], flat: 1, planks: [0.19, 1.6], box: MIL_BOX },   // milosint Oct 22: Milos floor, the oak veneer photo tiled into metre wide swirls; light oak planks about 0.19 m (milos_front_straight_pots_ryan_1022.webp)
   Mesh_1647: { k: [1.35, 1.35, 1.35], box: MIL_BOX },   // no room gate: its bbox centre lands 1 cm outside the Milos mask (m80/m81: 0 hits); the shader still limits it to Milos cells   // white west wall (Material_617), 1.38
-  Mesh_352: { room: 'milos', k: [1.4, 1.4, 1.4], col: [0.80, 0.80, 0.78], box: MIL_BOX },       // white marble round bar front, 1.49; milosint Oct 22: clean white (its noise marble drew horizontal streaks)
+  Mesh_352: { room: 'milos', k: [1.4, 1.4, 1.4], col: [0.80, 0.80, 0.78], flat: 1, lmc: [1.15, 1.1, 1.05], box: MIL_BOX },   // flat + constant baked light: the streaks stayed with col alone (its lightmap chart)
+        // white marble round bar front, 1.49; milosint Oct 22: clean white (its noise marble drew horizontal streaks)
   mil_barpot0: { room: 'milos', k: [1.2, 1.2, 1.2], box: MIL_BOX }, mil_barpot1: { room: 'milos', k: [1.2, 1.2, 1.2], box: MIL_BOX }, // m80: 1.4/1.6 overshot at B082 nz // stone urns 1.49 / 2.0
   // endfix (fix86, Oct 14): Mesh_240, the 20.7 m photo quad behind the Milos back bar (Material_115: Image_14 feeds base
   // colour and emission 0.42). The room gain leaves emission untouched and Material_115 has no material entry, so it kept
@@ -152,9 +157,9 @@ export const ROOM_OBJCAL_M78 = {
 // pattern), filled in from the photos. [regex on the Blender object name, entry as above]; RR_FLAGS.nomilint turns it off
 export const ROOM_OBJCAL_RE = (globalThis.RR_FLAGS || {}).nomilint ? [] : [
   [/^((md\d+_)?mi_cloth\d+|mil_bt\d+)$/, { room: 'milos', col: [0.80, 0.79, 0.76], flat: 1, lmc: [1.0, 0.96, 0.9] }],   // lmc: rr2_lightmap.js constant light, their lightmap charts are pixel noise; white linen (Material_740 is cream 0.80 0.75 0.64 with noise)
-  [/^r135_ceil163$/, { room: 'milos', k: [3.6, 3.6, 3.6], col: [0.88, 0.87, 0.83], flat: 1 }],   // the dining room ceiling plane (z 3.3, painted plaster photo, unbaked): warm cream like the photos
+  [/^r135_ceil163$/, { room: 'milos', k: [1.6, 1.6, 1.6], col: [0.88, 0.87, 0.83], plain: 1 }],   // the dining room ceiling plane (z 3.3, painted plaster photo, unbaked): warm cream like the photos
   [/^Path_69$/, { clipTop: ['Path_70', 0.004] }], [/^Path_(77|80)$/, { clipTop: ['Path_72', 0.004] }],
-  [/^mil_stool\d+_seat$/, { room: 'milos', col: [0.30, 0.38, 0.44] }],   // bar stools: pale blue grey upholstery (round bar photo), the 0.55 0.68 0.78 baked near white
+  [/^mil_stool\d+_seat$/, { room: 'milos', col: [0.17, 0.22, 0.27] }],   // bar stools: pale blue grey upholstery (round bar photo), the 0.55 0.68 0.78 baked near white
   [/(Back|Seating) coushion$/, { room: 'milos', col: [0.36, 0.45, 0.52] }],   // pale blue grey upholstered chairs (photo about sRGB 160 175 185)
 ];
 // milosint (Oct 22, Ryan 08:58): pieces taken out of the scene at load, by Blender object name. r9zz2_mil_understrip is a white
@@ -162,14 +167,53 @@ export const ROOM_OBJCAL_RE = (globalThis.RR_FLAGS || {}).nomilint ? [] : [
 // of the restored amphorae came out about 2.8 m wide and up to 0.85 m under the floor (the jar bodies mil_pithos, mil_pithosT,
 // mil_jarS, mil_pithosL are the right 1 m size and stay). RR_FLAGS.nomilhide keeps them.
 export const ROOM_HIDE_RE = (globalThis.RR_FLAGS || {}).nomilhide ? null : /^(r9zz2_mil_understrip|mil_(pithos|pithosT|pithosL|jarS)_rope\d+)$/;
+// cotegj (Oct 22, Ryan's COTE and Gjelina photos, W\inspect\photocmp_1022 A18 A05 A06): entries as above plus
+//   mat: regex on the material name (a mesh with several materials, e.g. the grill table's stone top and brass grill)
+//   kx: factor on reflected light anywhere (COTE has no room mask, so k cannot reach it); em: added emission, linear rgb
+// COTE (not a hero, no bake rule): table tops were bright blue (RR_Marble_Nero photo texture), photo: black stone with a
+// gold grill; the room read very dim (photo: warm amber); the flat ceiling is dark bronze lit amber in the photo; the
+// back wall behind the bar is a living green wall and the wall left of it a red lit wine wall. Gjelina (hero): gains
+// only, no emission (fix list 54): the shelves, bottles and bar read near black through the glass. RR_FLAGS.nocotegj: off.
+export const ROOM_OBJCAL_RE2 = (globalThis.RR_FLAGS || {}).nocotegj ? [] : [
+  [/_RR_COTE_GrillTable(\.\d+)?$/, { mat: /^RR_Marble_Nero/, col: [0.02, 0.024, 0.021], kx: 1.4 }],
+  [/_RR_COTE_GrillTable(\.\d+)?$/, { mat: /^RR_Brass_Satin/, kx: 2.2, em: [0.05, 0.03, 0.008] }],
+  [/^r137_ceil\d+$/, { col: [0.16, 0.10, 0.045], kx: 1.6, em: [0.045, 0.026, 0.008], flat: 1 }],
+  [/^(r137_f(255|257|259)|mbf_w(7|8|9|10))$/, { col: [0.30, 0.03, 0.03], em: [0.10, 0.006, 0.004], kx: 1.2 }],   // red lit wine wall (north west, left of the bar)
+  [/^(mbf_w(11|12|13))$/, { col: [0.035, 0.10, 0.03], kx: 2.0, em: [0.004, 0.012, 0.003] }],   // living green wall behind the bar
+  [/^cgx_cote_petals$/, { kx: 2.2, em: [0.05, 0.032, 0.012] }],   // new petal ceiling discs (cg_petals.glb, PATCH_rows.json): gold plaster lit amber from the coves
+  [/^(r9z[lq]_cote|r137_|mbf_floor_137_|mbf_w(14|15|16))/, { kx: 2.6 }],   // the rest of the COTE room: warm amber, not dim
+  [/^(gi_shelf|gi_bot|riw_shelf|ri_bott|gi_niche|gi_arch|ri_arch)\d*$/, { room: 'gjelina', kx: [1.7, 1.55, 1.35] }],   // back bar shelves and bottles (k needs a box, kx does not)
+  // Gjelina main room against Trip Davis' photos (Gjelina_Vegas_main_dining_room, gjelina_web_main_room_wide_green_soffit_open_kitchen):
+  // white plaster walls and ceiling, a sage green plaster canopy over the open kitchen and bar, grey stone floor, a black wine
+  // peg wall on the west side (the olive photo boxes Mesh_2019 / Mesh_1970 read as olive walls). Reviewer cand_0940 sweep.
+  [/^ri_ceil$/, { col: [0.075, 0.105, 0.075] }],            // green plaster canopy (was brown 0.30 0.24 0.18)
+  [/^riw_ceil$/, { col: [0.075, 0.105, 0.075] }],
+  [/^r134_ceil\d+$/, { col: [0.74, 0.71, 0.64], kx: 1.15 }],   // white plaster ceiling round the canopy
+  [/^(ri_back|riw_back)$/, { col: [0.70, 0.66, 0.58] }],       // white plaster walls (was brown 0.22 0.14 0.09)
+  [/^(ri_floor|riw_floor)$/, { col: [0.15, 0.14, 0.125] }],   // grey stone floor (was brown 0.10 0.065 0.04)
+  [/^(Mesh_2019|Mesh_1970)$/, { col: [0.022, 0.021, 0.02] }],   // olive photo boxes: black wine peg wall
+  // Paul's frames (Exteriors\_ref_by_place\gjelina_milos_wall): the plaster round the Milos side bay is a dark chocolate brown,
+  // the model drew it salmon pink (rot_rustband)
+  [/^(gjl_wall_right|gjl_rust_over_[LR]|gjl_rust_ret_top)$/, { col: [0.085, 0.05, 0.04] }],
+];
+// cotegj: pieces taken out at load. Mesh_154 is an emissive photo card box (11 m x 4.6 m x 4.3 m, Material_29, a photo of the
+// real room) standing in the middle of the Gjelina dining room; from inside the room it is the wall that blocks the centre
+// views (cand_0940 sweep int4). RR_FLAGS.nogjhide keeps it.
+export const ROOM_HIDE_RE2 = (globalThis.RR_FLAGS || {}).nogjhide || (globalThis.RR_FLAGS || {}).nocotegj ? null : /^Mesh_154$/;
+const ROOM_OBJCAL_ALL = [...ROOM_OBJCAL_RE, ...ROOM_OBJCAL_RE2];
 // milosint (Oct 22 09:5x, reviewer on cand_0940): the 'o' glyphs of the fascia lettering (Path_69 in Milos, Path_77 and
 // Path_80 in estiatorio) carry a thin sliver that rises above the letter and reads as an accent ("Milós") from 30 degrees
 // either side. clipTop: [reference letter, pad m] discards fragments above that letter's top (the 's' of the same word)
 // Moves (Blender metres, viewer only): mil_barpot1 and its flowers stood 1.4 m up at the west end with nothing under
 // them (reviewer: floating grey pot in front of the blue painting); set on the floor as a floor planter.
 // Low tableware: r9z*_milos_* glasses, plates, mugs and bowls lying on the floor (top under 0.45 m) are taken out.
-export const ROOM_MOVE = (globalThis.RR_FLAGS || {}).nomilhide ? {} : { mil_barpot1: [0, 0, -1.4], mil_barflowers1: [0, 0, -1.4] };
+export const ROOM_MOVE = (globalThis.RR_FLAGS || {}).nomilhide ? {} : { mil_barpot1: [0, 0, -1.4], mil_barflowers1: [0, 0, -1.4], mil_pithos: [-1.074, -2.222, 0] };   // milbar 10:3x: mil_pithos (015) stood inside the new bar body at its east end: on the floor in the mouth of the bartender gap, behind the pier
 export const ROOM_LOW_RE = (globalThis.RR_FLAGS || {}).nomilhide ? null : /^r9z[a-z]*_milos_\d+_(Wine Glass|dinner plate|salad plate|mug|soup|Glass)/;
+// milbar (Oct 22, Ryan 09:1x "interior bar looks nothing like the actual bar"): the old Milos bar is parked in the .blend
+// (build/r9ze4_lmx_gj_milbar.blend, collection _park_milbar) and taken out at load by Blender object name; the rebuilt bar is
+// data/gjM2c/017.glb (CL_MilBar). Mesh_2265 (the dark rings round the two hanging cans Mesh_552/553 over the old bar) is
+// parked too: the soffit ribbon replaces it, so its ROOM_OBJCAL entry above no longer applies. RR_FLAGS.nomilbarhide keeps them.
+export const MILBAR_HIDE_RE = (globalThis.RR_FLAGS || {}).nomilbarhide ? null : new RegExp("^(Mesh_2261|Mesh_2265|Mesh_351|Mesh_352|Mesh_353|Mesh_355|Mesh_356|Mesh_357|Mesh_358|Mesh_359|Mesh_360|Mesh_361|Mesh_362|Mesh_363|Mesh_364|Mesh_365|Mesh_366|Mesh_367|Mesh_368|Mesh_369|Mesh_370|Mesh_371|Mesh_372|Mesh_373|Mesh_374|Mesh_376|Mesh_377|Mesh_378|Mesh_379|Mesh_380|Mesh_381|Mesh_382|Mesh_383|Mesh_384|Mesh_385|Mesh_386|Mesh_387|Mesh_388|Mesh_389|Mesh_390|Mesh_391|Mesh_392|Mesh_393|Mesh_394|Mesh_395|Mesh_396|Mesh_397|Mesh_398|Mesh_399|Mesh_400|Mesh_401|Mesh_402|Mesh_403|Mesh_404|Mesh_405|Mesh_406|Mesh_407|Mesh_408|Mesh_409|Mesh_410|Mesh_411|Mesh_412|Mesh_413|Mesh_414|Mesh_415|Mesh_416|Mesh_417|Mesh_418|Mesh_419|Mesh_420|Mesh_421|Mesh_422|Mesh_423|Mesh_424|Mesh_425|Mesh_426|Mesh_427|Mesh_428|Mesh_429|Mesh_430|Mesh_431|Mesh_432|Mesh_433|Mesh_434|Mesh_435|Mesh_436|Mesh_437|Mesh_438|Mesh_439|Mesh_440|Mesh_441|Mesh_442|Mesh_443|Mesh_444|Mesh_445|Mesh_446|Mesh_447|Mesh_448|Mesh_449|Mesh_450|Mesh_451|Mesh_452|Mesh_453|Mesh_454|Mesh_455|Mesh_456|Mesh_457|Mesh_458|Mesh_459|Mesh_460|Mesh_461|Mesh_462|Mesh_463|Mesh_464|Mesh_465|Mesh_466|Mesh_467|Mesh_468|Mesh_469|Mesh_470|Mesh_471|Mesh_472|Mesh_473|Mesh_474|Mesh_475|Mesh_476|Mesh_477|Mesh_478|Mesh_479|Mesh_480|Mesh_481|Mesh_482|Mesh_483|Mesh_484|Mesh_485|Mesh_486|Mesh_487|Mesh_488|Mesh_489|Mesh_490|Mesh_491|Mesh_492|Mesh_493|Mesh_494|Mesh_495|Mesh_496|Mesh_497|Mesh_498|Mesh_499|Mesh_500|Mesh_501|Mesh_502|Mesh_503|Mesh_504|Mesh_505|Mesh_506|Mesh_507|Mesh_508|Mesh_509|Mesh_510|Mesh_511|Mesh_512|Mesh_513|Mesh_514|Mesh_515|Mesh_516|Mesh_517|Mesh_518|Mesh_519|Mesh_520|Mesh_521|Mesh_522|Mesh_523|Mesh_524|Mesh_525|Mesh_526|Mesh_527|Mesh_528|Mesh_529|Mesh_530|Mesh_531|Mesh_532|Mesh_533|Mesh_534|Mesh_535|Mesh_536|Mesh_552|Mesh_553|mil_barflowers0|mil_barflowers1|mil_barpot0|mil_barpot1|mil_branch0_blossoms|mil_branch1_blossoms|mil_bvase0|mil_bvase1|mil_stool0_frame|mil_stool0_seat|mil_stool10_frame|mil_stool10_seat|mil_stool11_frame|mil_stool11_seat|mil_stool12_frame|mil_stool12_seat|mil_stool13_frame|mil_stool13_seat|mil_stool14_frame|mil_stool14_seat|mil_stool15_frame|mil_stool15_seat|mil_stool16_frame|mil_stool16_seat|mil_stool1_frame|mil_stool1_seat|mil_stool2_frame|mil_stool2_seat|mil_stool3_frame|mil_stool3_seat|mil_stool4_frame|mil_stool4_seat|mil_stool5_frame|mil_stool5_seat|mil_stool6_frame|mil_stool6_seat|mil_stool7_frame|mil_stool7_seat|mil_stool8_frame|mil_stool8_seat|mil_stool9_frame|mil_stool9_seat|mil_urn0|r9zz2_mil_tower_bottle|r9zz2_mil_tower_bottle\\.001|r9zz2_mil_tower_bottle\\.002|r9zz2_mil_tower_bottle\\.003|r9zz2_mil_tower_bottle\\.004|r9zz2_mil_tower_bottle\\.005|r9zz2_mil_tower_bottle\\.006|r9zz2_mil_tower_bottle\\.007|r9zz2_mil_tower_bottle\\.008|r9zz2_mil_tower_bottle\\.009|r9zz2_mil_tower_bottle\\.010|r9zz2_mil_tower_bottle\\.011|r9zz2_mil_tower_bottle\\.012|r9zz2_mil_tower_bottle\\.013|r9zz2_mil_tower_bottle\\.014|r9zz2_mil_tower_glass|r9zz2_mil_tower_glass\\.001|r9zz2_mil_tower_glass\\.002|r9zz2_mil_tower_glass\\.003|r9zz2_mil_tower_lav|r9zz2_mil_tower_post|r9zz2_mil_tower_post\\.001|r9zz2_mil_tower_post\\.002|r9zz2_mil_tower_post\\.003|r9zz2_mil_tower_shelf|r9zz2_mil_tower_shelf\\.001|r9zz2_mil_tower_shelf\\.002|r9zz2_mil_understrip|r9zif_milos_0[2346789]_.*)$");
 const ROOM_NZ = 8;
 const clampT = (v) => Math.min(1.18, Math.max(0.85, v));
 export class RoomLighting {
@@ -243,7 +287,8 @@ export class RoomLighting {
   }
   patchAll(root) {
     const done = new Set(); let n = 0, cells = 0, nObj = 0;
-    let nHide = 0; if (ROOM_HIDE_RE) { const gone = []; root.traverse(o => { if (o.isMesh && ROOM_HIDE_RE.test(o.userData.invName || o.name)) gone.push(o); });
+    let nHide2 = 0; if (ROOM_HIDE_RE2) root.traverse(o => { if (o.isMesh && ROOM_HIDE_RE2.test(o.userData.invName || o.name)) { o.visible = false; o.userData.cotegjHidden = [o.geometry.drawRange.start, o.geometry.drawRange.count]; o.geometry.setDrawRange(0, 0); nHide2++; } });   // cotegj: hidden, kept in the scene
+    let nHide = 0; if (ROOM_HIDE_RE || MILBAR_HIDE_RE) { const gone = []; root.traverse(o => { const nm = o.userData.invName || o.name; if (o.isMesh && ((ROOM_HIDE_RE && ROOM_HIDE_RE.test(nm)) || (MILBAR_HIDE_RE && MILBAR_HIDE_RE.test(nm)))) gone.push(o); });
       for (const o of gone) { o.visible = false; o.removeFromParent(); nHide++; } }
     let nMove = 0, nLow = 0; { const byN = new Map(), bx = new THREE.Box3(), low = []; root.updateMatrixWorld(true);
       root.traverse(o => { if (!o.isMesh) return; const nm = o.userData.invName || o.name; if (!byN.has(nm)) byN.set(nm, o);
@@ -255,7 +300,7 @@ export class RoomLighting {
     // per object entries: a clone of the material for the matching meshes (one clone per material and entry)
     if (Object.keys(this.objCal).length) { const clones = new Map(), bb = new THREE.Box3(), cc = new THREE.Vector3(); root.updateMatrixWorld(true);
       root.traverse(o => { if (!o.isMesh || Array.isArray(o.material) || !o.material || !o.material.isMeshStandardMaterial) return;
-        const nm = o.userData.invName || o.name, ent = this.objCal[nm] || (ROOM_OBJCAL_RE.find(([re]) => re.test(nm)) || [])[1]; if (!ent) return; const src = o.material;
+        const nm = o.userData.invName || o.name, src = o.material, ent = this.objCal[nm] || (ROOM_OBJCAL_ALL.find(([re, e]) => re.test(nm) && (!e.mat || e.mat.test(src.name || ''))) || [])[1]; if (!ent) return;
         if ((src.transmission ?? 0) > 0 || src.userData.glassEmit || (src.transparent && !ent.tr)) return;
         // endfix: a piece of an object split for its size gates on the whole object's centre (rr2_player.js splitC), so
         // every piece keeps the entry (pieces whose own centre fell outside the Milos mask lost it)
@@ -264,12 +309,30 @@ export class RoomLighting {
         const key = src.uuid + '|' + nm; let m = clones.get(key);
         if (!m) { const ud = src.userData; src.userData = {}; m = src.clone(); src.userData = ud; m.userData = { ...ud };
           m.defines = { ...src.defines }; m.onBeforeCompile = src.onBeforeCompile; m.customProgramCacheKey = src.customProgramCacheKey;
-          m.userData.roomObjCal = ent; m.userData.roomObjName = nm; clones.set(key, m); }
+          m.userData.roomObjCal = ent; m.userData.roomObjName = nm;
+          // milosint 10:1x: plain: 1 swaps the Blender graph for one simple standard material of colour col (a short program that
+          // always links, and whose load time fallback looks the same); the graph version of the Milos ceiling never left its
+          // taupe fallback (photo texture, no room gain) in the sweeps
+          if (ent.plain && ent.col) { const q = new THREE.MeshStandardMaterial({ color: new THREE.Color().setRGB(...ent.col, THREE.LinearSRGBColorSpace), roughness: 0.9, metalness: 0, side: src.side, envMap: src.envMap || null, envMapIntensity: src.envMapIntensity ?? 1 });
+            q.name = (src.name || 'm') + ' [plain]'; q.userData = { roomObjCal: ent, roomObjName: nm, plain: true }; m = q; }
+          clones.set(key, m); }
         o.material = m; nObj++; this.objCalHits[nm] = (this.objCalHits[nm] || 0) + 1; }); }
     root.traverse(o => { if (!o.isMesh) return; for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
       if (!m || done.has(m) || !m.isMeshStandardMaterial || (m.transparent && !m.userData.roomObjCal) || (m.transmission ?? 0) > 0 || m.userData.glassEmit) continue; done.add(m); this.patch(m); n++; } });
+    // cotegj (Oct 22): the rotunda chandelier (rot_chand_crystals, 29k triangles) reads as sparse gold arms with few crystals
+    // against the dense crystal chandelier in Paul's IMG_1181 / IMG_1182; RR_FLAGS.chandx (default 3, 0 off) more turned and
+    // slightly smaller tiers of the same crystals as one InstancedMesh (same material, one extra draw, no new program)
+    const CHX = Math.max(0, Math.min(4, Math.round(+((globalThis.RR_FLAGS || {}).chandx ?? 3)))); let nChand = 0;
+    if (CHX) { const src = []; root.traverse(o => { if (o.isMesh && !o.isInstancedMesh && /^rot_chand_crystals$/.test(o.userData.invName || o.name)) src.push(o); });
+      if (src.length) { root.updateMatrixWorld(true); const bb = new THREE.Box3(); src.forEach(o => bb.expandByObject(o)); const c = bb.getCenter(new THREE.Vector3()), h = bb.max.y - bb.min.y;
+        const SPEC = [[0.21, 0.94, -0.10], [0.42, 0.86, -0.22], [0.13, 0.66, 0.06], [0.31, 0.5, -0.02]].slice(0, CHX);   // [turn rad, scale, drop as a share of the height]
+        const rootInv = new THREE.Matrix4().copy(root.matrixWorld).invert(), M = new THREE.Matrix4(), A = new THREE.Matrix4(), Bm = new THREE.Matrix4();
+        for (const o of src) { const im = new THREE.InstancedMesh(o.geometry, o.material, SPEC.length); im.name = (o.name || 'rot_chand_crystals') + '_cgx'; im.userData.invName = 'rot_chand_crystals_cgx';
+          SPEC.forEach(([a, s, dy], i) => { A.makeTranslation(c.x, c.y + dy * h, c.z).multiply(Bm.makeRotationY(a)).multiply(M.makeScale(s, s, s)).multiply(Bm.makeTranslation(-c.x, -c.y, -c.z));
+            im.setMatrixAt(i, new THREE.Matrix4().multiplyMatrices(rootInv, A).multiply(o.matrixWorld)); });
+          im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); root.add(im); nChand += SPEC.length; } } }
     for (const v of this.id) if (v) cells++;
-    return { hidden: nHide, moved: nMove, lowTableware: nLow, clipY: ROOM_OBJCAL_RE.filter(([, e]) => e.clipTop).map(([, e]) => e.clipY ?? null), materials: n, rooms: this.names.length, cells, grid: [this.W, this.H], objMeshes: nObj, objCal: this.objCalHits, ...(clip ? { roomclip: clip } : {}) };
+    return { hidden: nHide, hidden2: nHide2, chandx: nChand, moved: nMove, lowTableware: nLow, clipY: ROOM_OBJCAL_RE.filter(([, e]) => e.clipTop).map(([, e]) => e.clipY ?? null), materials: n, rooms: this.names.length, cells, grid: [this.W, this.H], objMeshes: nObj, objCal: this.objCalHits, ...(clip ? { roomclip: clip } : {}) };
   }
   patch(material) {
     if (material.userData.roomLit) return; material.userData.roomLit = true;
@@ -362,6 +425,15 @@ ${(globalThis.RR_FLAGS || {}).endfix ? `      // endfix (end agent 2, Oct 14): s
 ` : ''}    }
   }
   #include <aomap_fragment>`);
+      // cotegj (Oct 22): kx and em of an object entry (identity for every other material, uniform values only, no new program);
+      // the uniform objects stay on the material (userData.roomU) so a look pass can tune them live
+      { const ud = material.userData, U = ud.roomU || (ud.roomU = { mx: { value: new THREE.Vector3(1, 1, 1) }, em: { value: new THREE.Vector3(0, 0, 0) } });
+        if (!ud.roomUSet) { ud.roomUSet = 1; if (mc && ud.roomObjCal) (globalThis.__rrRoomU || (globalThis.__rrRoomU = [])).push([ud.roomObjName || material.name, U]); const kx = mc && mc.kx != null ? mc.kx : 1; U.mx.value.set(...(Array.isArray(kx) ? kx : [kx, kx, kx])); if (mc && mc.em) U.em.value.set(...mc.em); }
+        sh.uniforms.uRoomMX = U.mx; sh.uniforms.uRoomEM = U.em; if (sh.uniforms.uRoomCol) U.col = sh.uniforms.uRoomCol; U.mk = sh.uniforms.uRoomMK;
+        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec3 uRoomMX; uniform vec3 uRoomEM;')
+          .replace('#include <aomap_fragment>', `reflectedLight.directDiffuse *= uRoomMX; reflectedLight.indirectDiffuse *= uRoomMX;
+    reflectedLight.directSpecular *= uRoomMX; reflectedLight.indirectSpecular *= uRoomMX; totalEmissiveRadiance += uRoomEM;
+  #include <aomap_fragment>`); }
     };
     material.customProgramCacheKey = () => (prevKey ? prevKey.call(material) : '') + '|room2' + (SUG_MASK_ON ? 'gm' : '') + (((globalThis.RR_FLAGS || {}).ceilfix === true ? 15 : +((globalThis.RR_FLAGS || {}).ceilfix) || 0) & 1 ? 'cf' : '') + ((globalThis.RR_FLAGS || {}).endfix ? 's' : '') + ((material.userData.roomObjCal && (material.userData.roomObjCal.col || material.userData.roomObjCal.flat || material.userData.roomObjCal.planks || material.userData.roomObjCal.clipY != null)) ? '|mc' + (material.userData.roomObjCal.col || []).join(',') + (material.userData.roomObjCal.flat ? 'f' : '') + (material.userData.roomObjCal.planks ? 'p' + material.userData.roomObjCal.planks.join(',') : '') + (material.userData.roomObjCal.clipY != null ? 'y' + material.userData.roomObjCal.clipY.toFixed(4) : '') : '');
     material.needsUpdate = true;
