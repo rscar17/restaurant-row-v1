@@ -26,9 +26,11 @@ export const DM = {
   wallBox: [4.6, -2.0, 15.15, 18.6], ceilBox: [4.6, -4.2, 15.15, 9.25],   // walls stop short of the facade (frontsfix walnut headers stay)
   cream: [0.80, 0.70, 0.56],         // scene linear, IMG_5487 lit plaster about sRGB 228 214 194
   rings: [[7.6, -0.6, 3.2], [11.1, 0.9, 3.2], [13.6, 5.6, 3.2], [7.4, 5.6, 3.2]],
-  adler: [[10.4, 3.4], [11.4, 7.3]],
-  rearRings: [[10.2, 13.7], [9.3, 16.6], [13.4, 15.8]],
-  stone: { y: 18.42, x0: 6.55, x1: 15.15, z0: 0.02, z1: 3.27, pil: [9.45, 12.35] },
+  adler: [[6.45, 3.675, 1], [11.4, 7.3, 0]],   // [x, y, long axis along y]: the first hangs in front of the leather panel as in IMG_5487
+  panel: { x: 4.87, yc: 3.675, a: 1.25, zs: 1.55 },   // semicircle topped tufted leather panel with an oval mirror (IMG_5487, 5492, 5508)
+  columns: [[5.17, 1.833], [5.17, 5.517]],   // gold mosaic columns on the bay lines beside the panel (IMG_5506, 5511)
+  rearRings: [[12.0, 15.0], [8.2, 13.6]],   // IMG_5501: the big ring centred over the A16 view
+  stone: { y: 18.42, x0: 6.55, x1: 15.15, z0: 0.02, z1: 3.27, pil: [9.45, 14.4] },   // IMG_5501 pilasters at about 29 % and 69 % of the A16 frame
 };
 // shared uniforms (live tuning: RR_DELMINT.u.*)
 const U = {
@@ -64,17 +66,23 @@ function patchCream(m) {
 }
 
 // ---------------------------------------------------------------- carpet: blue swirl to the photos' brown and bronze (IMG_5488, 5498)
-function patchCarpet(m) {
-  if (m.userData.dmCarpet) return m;
-  const c = m.clone(); c.userData = { ...m.userData, dmCarpet: true }; if (m.defines) c.defines = { ...m.defines };
-  const ob = m.onBeforeCompile, ok = m.customProgramCacheKey;
-  c.onBeforeCompile = function (sh, r) { if (ob) ob.call(this, sh, r); if (!sh.fragmentShader.includes('#include <opaque_fragment>')) { c.userData.dmSkip = 1; return; }
-    sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', `{ vec3 dmc0 = max( diffuseColor.rgb, vec3( 0.02 ) ); float dml = max( max( dmc0.r, dmc0.g ), dmc0.b );
-  vec3 dmc = mix( vec3( 0.045, 0.028, 0.017 ), vec3( 0.36, 0.25, 0.155 ), smoothstep( 0.04, 0.6, dml ) );
+// generic recolour: the old colour's brightness picks a tone between lo and hi (scene linear); gate = top height in m (box gated to
+// the Delmonico wall box, for materials shared with other rooms), 0 = no gate. key tells the programs apart.
+function patchTint(m, lo, hi, gate, key) {
+  const tag = 'dmT' + key; if (m.userData[tag]) return m;
+  const c = m.clone(); c.userData = { ...m.userData, [tag]: true }; if (m.defines) c.defines = { ...m.defines };
+  const ob = m.onBeforeCompile, ok = m.customProgramCacheKey, f3 = (v) => 'vec3( ' + v.map(x => (+x).toFixed(4)).join(', ') + ' )';
+  c.onBeforeCompile = function (sh, r) { if (ob) ob.call(this, sh, r); if (!sh.fragmentShader.includes('#include <opaque_fragment>') || (gate && !sh.vertexShader.includes('#include <project_vertex>'))) { c.userData.dmSkip = 1; return; }
+    if (gate) { Object.assign(sh.uniforms, { uDmWall: U.uDmWall }); sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vDmKW;').replace('#include <project_vertex>', '#include <project_vertex>\nvDmKW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;'); sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vDmKW; uniform vec4 uDmWall;'); }
+    sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', (gate ? 'if ( vDmKW.x > uDmWall.x && vDmKW.x < uDmWall.z && -vDmKW.z > uDmWall.y && -vDmKW.z < uDmWall.w && vDmKW.y < ' + (+gate).toFixed(2) + ' ) ' : '') + `{ vec3 dmc0 = max( diffuseColor.rgb, vec3( 0.02 ) ); float dml = max( max( dmc0.r, dmc0.g ), dmc0.b );
+  vec3 dmc = mix( ${f3(lo)}, ${f3(hi)}, smoothstep( 0.04, 0.6, dml ) );
   outgoingLight *= min( dmc / dmc0, vec3( 8.0 ) ); diffuseColor.rgb = dmc; }
 #include <opaque_fragment>`); c.userData.dmPatched = 1; };
-  c.customProgramCacheKey = function () { return (ok ? ok.call(this) : '') + '|dmk'; }; c.name = (m.name || 'm') + ' [dmk]'; return c;
+  c.customProgramCacheKey = function () { return (ok ? ok.call(this) : '') + '|' + tag + (gate ? 'g' : ''); }; c.name = (m.name || 'm') + ' [' + tag + ']'; return c;
 }
+const CARPET = [[0.045, 0.028, 0.017], [0.36, 0.25, 0.155]];   // IMG_5488, 5498: brown and bronze starburst carpet
+const LEATHER = [[0.022, 0.012, 0.007], [0.16, 0.085, 0.045]];   // IMG_5487, 5501: dark brown leather wing chairs
+function patchCarpet(m, gate = false) { return patchTint(m, CARPET[0], CARPET[1], gate ? 0.3 : 0, 'k'); }
 // ---------------------------------------------------------------- geometry clip (keeps the parts outside a box)
 const _v = new THREE.Vector3();
 function clipOutside(mesh, box) {   // box: blender [x0, y0, x1, y1]; triangles split against the four outside regions
@@ -160,7 +168,7 @@ function hbar(gb, xa, ya, xb, yb, z, r, col) { const dx = xb - xa, dy = yb - ya,
   gb.quad([xa - nx, ya - ny, z - r, mulc(col, 0.7)], [xb - nx, yb - ny, z - r, mulc(col, 0.7)], [xb - nx, yb - ny, z + r, col], [xa - nx, ya - ny, z + r, col]); }
 function sphere(gb, x, y, z, r, col, seg = 8, ring = 6) { const P = (i, j) => { const th = i / seg * Math.PI * 2, ph = j / ring * Math.PI; return [x + r * Math.sin(ph) * Math.cos(th), y + r * Math.sin(ph) * Math.sin(th), z + r * Math.cos(ph), col]; };
   for (let j = 0; j < ring; j++) for (let i = 0; i < seg; i++) gb.quad(P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1)); }
-function buildAdler(cx, cy, seed) {
+function buildAdler(cx, cy, seed, alongY = 0) {
   const brass = [0.62, 0.42, 0.16], bulb = [3.2, 2.5, 1.6], R = rng(seed), gm = new GB(), gl = new GB(), zf = 2.95, W = 0.75, D = 0.22;
   const ztop = vaultZ(cx, cy)[0];
   cyl(gm, cx - 0.35, cy, zf, ztop, 0.012, brass); cyl(gm, cx + 0.35, cy, zf, ztop, 0.012, brass);   // two drop rods
@@ -172,17 +180,56 @@ function buildAdler(cx, cy, seed) {
     cyl(gm, x, y, z0, z1, 0.009, brass, 5); sphere(gl, x, y, up ? z1 + 0.03 : z0 - 0.03, 0.032, bulb, 8, 5); }
   const mb = new THREE.MeshBasicMaterial({ vertexColors: true }); mb.name = 'dm_brass';
   const ml = new THREE.MeshBasicMaterial({ vertexColors: true }); ml.name = 'dm_globe';
-  const a = new THREE.Mesh(gm.build(), mb), b = new THREE.Mesh(gl.build(), ml); a.name = 'dm_adler_brass'; b.name = 'dm_adler_globes'; return [a, b];
+  const ga = gm.build(), gg = gl.build(); if (alongY) for (const g of [ga, gg]) { g.translate(-cx, 0, cy); g.rotateY(Math.PI / 2); g.translate(cx, 0, -cy); g.computeBoundingSphere(); g.computeBoundingBox(); }
+  const a = new THREE.Mesh(ga, mb), b = new THREE.Mesh(gg, ml); a.name = 'dm_adler_brass'; b.name = 'dm_adler_globes'; return [a, b];
 }
 
+// ---------------------------------------------------------------- 3b. leather panel with oval mirror, gold mosaic columns
+function buildPanel() {   // IMG_5487: brown leather, vertical channel tufting, semicircle top, oval mirror in a dark wood frame, under the west lunette
+  const Pn = DM.panel, x = Pn.x, a = Pn.a, zs = Pn.zs, out = [], gb = new GB(), NY = 64, NZ = 48, ztop = zs + a;
+  const leather = [0.15, 0.062, 0.03], inside = (y, z) => z <= zs ? Math.abs(y) <= a : (y * y + (z - zs) ** 2) <= a * a;
+  const P = (i, j) => { const y = -a + 2 * a * i / NY, z = ztop * j / NZ; const ch = 0.165, ph = ((y + a) / ch) % 1, groove = Math.pow(Math.abs(Math.cos(ph * Math.PI)), 6);   // channels 16.5 cm
+    const bulge = 0.035 * (1 - groove), lz = 0.78 + 0.22 * (z / ztop), k = (0.62 + 0.38 * (1 - groove)) * lz * (0.9 + 0.1 * Math.sin(z * 9 + i));
+    return [x + 0.03 + bulge, Pn.yc + y, z, mulc(leather, k), inside(y, z)]; };
+  for (let j = 0; j < NZ; j++) for (let i = 0; i < NY; i++) { const q = [P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1)]; if (!q.every(v => v[4])) continue; gb.quad(...q.map(v => v.slice(0, 4))); }
+  // dark wood edge band round the outline
+  const wood = [0.05, 0.03, 0.018], NE = 72, edge = []; for (let k = 0; k <= NE; k++) { const t = k / NE; let y, z;
+    if (t < 0.2) { y = -a; z = zs * t / 0.2; } else if (t < 0.8) { const th = Math.PI - (t - 0.2) / 0.6 * Math.PI; y = a * Math.cos(th); z = zs + a * Math.sin(th); } else { y = a; z = zs * (1 - (t - 0.8) / 0.2); } edge.push([y, z]); }
+  for (let k = 0; k < NE; k++) { const [y0, z0] = edge[k], [y1, z1] = edge[k + 1]; gb.quad([x + 0.09, Pn.yc + y0, z0, wood], [x + 0.09, Pn.yc + y1, z1, wood], [x + 0.005, Pn.yc + y1 * 1.06, z1 + (z1 > zs ? (z1 - zs) * 0.06 : 0), mulc(wood, 0.7)], [x + 0.005, Pn.yc + y0 * 1.06, z0 + (z0 > zs ? (z0 - zs) * 0.06 : 0), mulc(wood, 0.7)]); }
+  // oval mirror (0.62 x 0.42 half axes at 1.95 m) with its frame
+  const zm = 1.95, my = 0.62, mz = 0.42, NM = 48;
+  for (let k = 0; k < NM; k++) { const t0 = k / NM * 2 * Math.PI, t1 = (k + 1) / NM * 2 * Math.PI;
+    const r0 = [Math.cos(t0), Math.sin(t0)], r1 = [Math.cos(t1), Math.sin(t1)], cm = (r) => { const v = 0.5 + 0.5 * r[1]; return [0.10 + 0.10 * (1 - v), 0.095 + 0.085 * (1 - v), 0.085 + 0.07 * (1 - v)]; };
+    gb.v(x + 0.075, Pn.yc, zm, [0.17, 0.155, 0.14]); gb.v(x + 0.075, Pn.yc + my * r0[0], zm + mz * r0[1], cm(r0)); gb.v(x + 0.075, Pn.yc + my * r1[0], zm + mz * r1[1], cm(r1));
+    const fo = 1.12, fc = mulc([0.30, 0.20, 0.09], 0.8 + 0.3 * Math.max(0, r0[1]));
+    gb.quad([x + 0.085, Pn.yc + my * r0[0], zm + mz * r0[1], fc], [x + 0.085, Pn.yc + my * r1[0], zm + mz * r1[1], fc], [x + 0.08, Pn.yc + my * fo * r1[0], zm + mz * (fo + 0.05) * r1[1], mulc(fc, 0.75)], [x + 0.08, Pn.yc + my * fo * r0[0], zm + mz * (fo + 0.05) * r0[1], mulc(fc, 0.75)]); }
+  const m = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }); m.name = 'dm_leather_panel'; const mesh = new THREE.Mesh(gb.build(), m); mesh.name = 'dm_leather_panel'; out.push(mesh); return out;
+}
+function mosaicTex() { const R = rng(5506); return canvasTex(256, 1024, (cx, W, H) => { cx.fillStyle = 'rgb(70,52,24)'; cx.fillRect(0, 0, W, H); const s = 16;
+  for (let y = 0; y < H; y += s) for (let x = 0; x < W; x += s) { const v = R(), b = 0.8 + 0.35 * R(); cx.fillStyle = `rgb(${Math.min(255, Math.round((196 + 40 * v) * b))},${Math.min(255, Math.round((150 + 36 * v) * b))},${Math.round((62 + 30 * v) * b)})`; cx.fillRect(x + 1, y + 1, s - 2, s - 2); } }); }
+function buildColumns() {   // IMG_5506, 5511: round shafts clad in small gold glass tiles, dark bronze base, white plaster capital
+  const out = [], gs = new GB(), gc = new GB(), N = 28, r = 0.3, z0 = 0.15, z1 = 2.72, lx = 1, ly = 0.25;   // baked light from the room side (+x)
+  const lam = (nx, ny) => 0.5 + 0.55 * Math.max(0, (nx * lx + ny * ly) / Math.hypot(lx, ly));
+  for (const [cx, cy] of DM.columns) {
+    for (let k = 0; k < N; k++) { const a0 = k / N * 2 * Math.PI, a1 = (k + 1) / N * 2 * Math.PI, c0 = [Math.cos(a0), Math.sin(a0)], c1 = [Math.cos(a1), Math.sin(a1)], u0 = k / N * 3, u1 = (k + 1) / N * 3, l0 = lam(...c0), l1 = lam(...c1);
+      gs.v(cx + r * c0[0], cy + r * c0[1], z0, [l0, l0, l0], u0, 0); gs.v(cx + r * c1[0], cy + r * c1[1], z0, [l1, l1, l1], u1, 0); gs.v(cx + r * c1[0], cy + r * c1[1], z1, [l1, l1, l1], u1, 2.5);
+      gs.v(cx + r * c0[0], cy + r * c0[1], z0, [l0, l0, l0], u0, 0); gs.v(cx + r * c1[0], cy + r * c1[1], z1, [l1, l1, l1], u1, 2.5); gs.v(cx + r * c0[0], cy + r * c0[1], z1, [l0, l0, l0], u0, 2.5);
+      const ring = (za, zb, ra, rb, col) => { const ca = mulc(col, lam(...c0)), cb = mulc(col, lam(...c1)); gc.quad([cx + ra * c0[0], cy + ra * c0[1], za, ca], [cx + ra * c1[0], cy + ra * c1[1], za, cb], [cx + rb * c1[0], cy + rb * c1[1], zb, cb], [cx + rb * c0[0], cy + rb * c0[1], zb, ca]); };
+      const bronze = [0.07, 0.045, 0.025], plaster = mulc(DM.cream, 0.95);
+      ring(0, z0, 0.37, 0.37, bronze); ring(z0, z0, 0.37, r, bronze);
+      ring(z1, z1 + 0.06, r + 0.02, r + 0.02, plaster); ring(z1 + 0.06, z1 + 0.24, r + 0.01, r + 0.12, plaster); ring(z1 + 0.24, z1 + 0.30, r + 0.16, r + 0.16, plaster); }
+    box(gc, cx - 0.4, cy - 0.4, z1 + 0.30, cx + 0.4, cy + 0.4, Math.max(z1 + 0.40, vaultZ(cx, cy)[1] - 0.02), mulc(DM.cream, 1.0)); }   // impost block up to the transverse arch
+  const ms = new THREE.MeshBasicMaterial({ map: mosaicTex(), vertexColors: true }); ms.name = 'dm_gold_mosaic'; const s = new THREE.Mesh(gs.build(), ms); s.name = 'dm_column_shafts';
+  const mc = new THREE.MeshBasicMaterial({ vertexColors: true }); mc.name = 'dm_column_trim'; const c = new THREE.Mesh(gc.build(), mc); c.name = 'dm_column_trim'; out.push(s, c); return out;
+}
 // ---------------------------------------------------------------- 4. rear room: plank ceiling, beams, flagstone wall
 function canvasTex(w, h, draw) { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const cx = cv.getContext('2d'); draw(cx, w, h);
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.needsUpdate = true; return t; }
 function stoneTex() {   // irregular flagstone (jittered Voronoi), cream to sand stones, dark joints, floor uplight scallops baked in
-  const S = DM.stone, Wm = S.x1 - S.x0, Hm = S.z1 - S.z0, W = 2048, H = Math.round(2048 * Hm / Wm), cell = 78, R = rng(5501);
+  const S = DM.stone, Wm = S.x1 - S.x0, Hm = S.z1 - S.z0, W = 2048, H = Math.round(2048 * Hm / Wm), cell = 104, R = rng(5501);
   return canvasTex(W, H, (cx) => {
     const gx = Math.ceil(W / cell) + 2, gy = Math.ceil(H / cell) + 2, pts = [], col = [];
-    for (let j = 0; j < gy; j++) for (let i = 0; i < gx; i++) { pts.push([(i - 1 + 0.15 + 0.7 * R()) * cell * 1.25, (j - 1 + 0.15 + 0.7 * R()) * cell * 0.85]); const v = R(); col.push([214 + 26 * v + 8 * R(), 198 + 24 * v + 6 * R(), 168 + 22 * v + 6 * R()]); }
+    for (let j = 0; j < gy; j++) for (let i = 0; i < gx; i++) { pts.push([(i - 1 + 0.15 + 0.7 * R()) * cell * 1.25, (j - 1 + 0.15 + 0.7 * R()) * cell * 0.85]); const v = R(); col.push([222 + 28 * v + 8 * R(), 206 + 26 * v + 6 * R(), 172 + 24 * v + 6 * R()]); }
     const img = cx.createImageData(W, H), d = img.data, cw = cell * 1.25, ch = cell * 0.85;
     const pil = S.pil.map(x => (x - S.x0) / Wm * W), wash = [];
     for (let x = S.x0 + 0.75; x < S.x1; x += 1.45) wash.push((x - S.x0) / Wm * W);
@@ -208,8 +255,8 @@ function box(gb, x0, y0, z0, x1, y1, z1, col) {   // axis box, simple face shadi
 function buildRear() {
   const Rr = DM.rear, out = [];
   { const gb = new GB(), k = 1.0, c = [k, k, k], z = Rr.zc, s = 0.9;   // planks run along x, 0.9 m of texture per repeat
-    gb.v(Rr.x0, Rr.y0, z, c, 0, 0); gb.v(Rr.x0, Rr.y1, z, c, 0, (Rr.y1 - Rr.y0) / s); gb.v(Rr.x1, Rr.y1, z, c, (Rr.x1 - Rr.x0) / s, (Rr.y1 - Rr.y0) / s);
-    gb.v(Rr.x0, Rr.y0, z, c, 0, 0); gb.v(Rr.x1, Rr.y1, z, c, (Rr.x1 - Rr.x0) / s, (Rr.y1 - Rr.y0) / s); gb.v(Rr.x1, Rr.y0, z, c, (Rr.x1 - Rr.x0) / s, 0);
+    const NX = 12, NY = 12, X = (i) => Rr.x0 + (Rr.x1 - Rr.x0) * i / NX, Y = (j) => Rr.y0 + (Rr.y1 - Rr.y0) * j / NY;
+    for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) { const q = [[X(i), Y(j)], [X(i), Y(j + 1)], [X(i + 1), Y(j + 1)], [X(i + 1), Y(j)]].map(([x, y]) => { const cx = (Rr.x0 + Rr.x1) / 2, cy = (Rr.y0 + Rr.y1) / 2, k = 0.82 + 0.18 * Math.exp(-(((x - cx) / 4) ** 2 + ((y - cy) / 4) ** 2)); return [x, y, z, [k, k, k], (x - Rr.x0) / s, (y - Rr.y0) / s]; }); gb.quad(...q); }
     const m = new THREE.MeshBasicMaterial({ map: plankTex(), vertexColors: true, side: THREE.DoubleSide, color: new THREE.Color(0.78, 0.74, 0.70) }); m.name = 'dm_planks';
     const mesh = new THREE.Mesh(gb.build(), m); mesh.name = 'dm_rear_planks'; out.push(mesh); }
   { const gb = new GB(), wal = [0.085, 0.052, 0.032], z1 = Rr.zc - 0.005, z0 = Rr.zc - 0.30;
@@ -270,7 +317,9 @@ export function delmint(P) {
     if (ext < 3.0 || bx1 < wb[0] || bx0 > wb[2] || by1 < wb[1] || by0 > wb[3] || bb.min.y > 5.3) return;
     let c = seenM.get(m); if (!c) { c = patchCream(m); seenM.set(m, c); } o.material = c; nPatched++; (rep.creamNames ||= []).length < 40 && rep.creamNames.push(nm.trim()); });
   rep.cream = nPatched;
-  if (+(F().dmcarpet ?? 1)) { let nk = 0; const seenK = new Map(); root.traverse(o => { if (!o.isMesh || !o.material || Array.isArray(o.material)) return; if (!/^del_carpet/.test(o.material.name || '')) return; let c = seenK.get(o.material); if (!c) { c = patchCarpet(o.material); seenK.set(o.material, c); } o.material = c; nk++; }); rep.carpet = nk; }
+  if (+(F().dmcarpet ?? 1)) { let nk = 0; const seenK = new Map(); root.traverse(o => { if (!o.isMesh || !o.material || Array.isArray(o.material)) return; const rf = (o.userData.invName || '') === 'mbf_floor_136_0'; if (!/^del_carpet/.test(o.material.name || '') && !rf) return; let c = seenK.get(o.material); if (!c) { c = patchCarpet(o.material, rf); seenK.set(o.material, c); } o.material = c; nk++; }); rep.carpet = nk; }
+  if (+(F().dmleather ?? 1)) { let nl = 0; const seenL = new Map(); root.traverse(o => { if (!o.isMesh || !o.material || Array.isArray(o.material)) return; const mn = o.material.name || '', own = /^del_leather$/.test(mn), blue = /^r9zy_mil_paleblue$/.test(mn) && /del_chair/.test(o.userData.invName || ''); if (!own && !blue) return;
+    const k = o.material.uuid + (blue ? 'b' : ''); let c = seenL.get(k); if (!c) { c = patchTint(o.material, LEATHER[0], LEATHER[1], blue ? 1.5 : 0, blue ? 'lb' : 'l'); seenL.set(k, c); } o.material = c; nl++; }); rep.leather = nl; }
   // rear room: blocky chairs out (parked), del_chair copies facing their tables
   const R = DM.rear, tables = [], blocky = [];
   root.traverse(o => { if (!o.isMesh || !o.material || Array.isArray(o.material)) return; const mn = o.material.name || ''; const c = centreB(o); if (c[0] < R.x0 - 0.3 || c[0] > R.x1 || c[1] < R.y0 || c[1] > R.y1) return;
@@ -287,7 +336,7 @@ export function delmint(P) {
   const srcRing = byInv.get('del_chand_2'); rep.rings = 0; if (srcRing) for (const [x, y] of DM.rearRings) { if (placeCopy(srcRing, x, y, 0, -0.25)) rep.rings++; }
   // own pieces: vault, Adler chandeliers, rear ceiling, stone wall (drawn only below 4.3 m eye height; the overview keeps its cut-away)
   const grp = new THREE.Group(); grp.name = 'delmint'; grp.userData.rrOwn = true;
-  grp.add(buildVault()); DM.adler.forEach(([x, y], k) => grp.add(...buildAdler(x, y, 101 + k))); for (const m of buildRear()) grp.add(m); for (const c of ceilMeshes) grp.add(c);
+  grp.add(buildVault()); DM.adler.forEach(([x, y, ay], k) => grp.add(...buildAdler(x, y, 101 + k, ay))); for (const m of buildPanel()) grp.add(m); for (const m of buildColumns()) grp.add(m); for (const m of buildRear()) grp.add(m); for (const c of ceilMeshes) grp.add(c);
   grp.traverse(o => { o.userData.rrOwn = true; if (o.isMesh && o.name !== 'dm_room_ceiling') { o.frustumCulled = true; o.matrixAutoUpdate = false; o.updateMatrix(); } });
   scene.add(grp); grp.updateMatrixWorld(true);
   const prev = scene.onBeforeRender; scene.onBeforeRender = function (r, s, cam, rt) { if (prev) prev.call(this, r, s, cam, rt); if (cam && cam.isCamera) { const y = cam.matrixWorld.elements[13]; grp.visible = y < (+(F().dmeye ?? 4.3)) && y > -0.2 || (y < -0.2 && y > -4.5); } };

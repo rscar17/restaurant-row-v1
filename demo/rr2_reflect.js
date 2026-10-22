@@ -3,6 +3,7 @@
 // reflected room is the real render; box projection makes it line up with the walls instead of floating at infinity.
 import * as THREE from 'three';
 import { BL_A2C } from './blender_material.js';
+const SOFTF = () => +((globalThis.RR_FLAGS || {}).softfloor ?? 1);   // gjfix (Oct 22): soft lamp reflections on every polished floor, RR_FLAGS.softfloor=0 restores the m60 pins
 
 export function makeBox(posThree, minThree, maxThree) {
   return { pos: { value: new THREE.Vector3(...posThree) }, min: { value: new THREE.Vector3(...minThree) }, max: { value: new THREE.Vector3(...maxThree) } };
@@ -583,7 +584,10 @@ export class FloorReflector {
       if (F.floordirect) sh.fragmentShader = '#define RR_FLOORDIRECT\n' + sh.fragmentShader;
       // ?coatcap=x: luminance cap on the coat's mirror sample. Default 1000, above every glint sphere (point lamps 200 to 610),
       // so the coat mirrors each lamp disc at its true radiance (see the coat block below)
-      sh.fragmentShader = '#define RR_COATCAP ' + (+(F.coatcap ?? 1000)).toFixed(3) + '\n' + sh.fragmentShader;
+      // gjfix softfloor (Oct 22, reviewer on cand_1045: hard white pins on every polished floor, the photos show soft lamp
+      // reflections): with RR_FLAGS.softfloor on (default 1, 0 = the m60 look) the coat cap drops to RR_FLAGS.softcap (default 4,
+      // the m58 value): the sharp coat no longer mirrors each lamp disc as a pin; the base lobe keeps the blurred pool
+      sh.fragmentShader = '#define RR_COATCAP ' + (+(F.coatcap ?? (SOFTF() ? (F.softcap ?? 4) : 1000))).toFixed(3) + '\n' + sh.fragmentShader;
       // ?mirrortilt=x: largest per tile tilt (radians) the mirror lookup follows (default 0.035)
       sh.fragmentShader = '#define RR_TILTCAP ' + (+(F.mirrortilt ?? 0.035)).toFixed(4) + '\n' + sh.fragmentShader;
       // ?mirrorrmin=x: lowest roughness the mirror lobe uses (default 0.1, the middle of the plain floor's per tile range)
@@ -823,7 +827,7 @@ vec3 rrFloorLobe(vec2 uv, vec2 ax, float s, float NoV, vec2 tw) {
     }
   }`);
     };
-    material.customProgramCacheKey = () => { const F = globalThis.RR_FLAGS || {}; return (prevKey ? prevKey.call(material) : '') + '|floorrefl12' + (F.nocoat ? 'nc' : '') + (F.floordirect ? 'fd' : '') + (F.coatcap ?? 1000) + '_' + (F.mirrortilt ?? 0.035) + '_' + (F.coattail ?? 1) + (F.floorblur ? 'fb' + (F.floorblurk ?? 1) + '_' + (F.floorblurmin ?? 0.6) : '') + (F.floorfix ? 'ff1' : '') + (F.floorfix2 ? 'ffx2_' + (+(F.ff2csig ?? 0.006)).toFixed(4) : '') + (F.ff2dbg ? 'dbg' : ''); };
+    material.customProgramCacheKey = () => { const F = globalThis.RR_FLAGS || {}; return (prevKey ? prevKey.call(material) : '') + '|floorrefl12' + (F.nocoat ? 'nc' : '') + (F.floordirect ? 'fd' : '') + (F.coatcap ?? (SOFTF() ? (F.softcap ?? 4) : 1000)) + '_' + (SOFTF() ? 'sf' : '') + '_' + (F.mirrortilt ?? 0.035) + '_' + (F.coattail ?? 1) + (F.floorblur ? 'fb' + (F.floorblurk ?? 1) + '_' + (F.floorblurmin ?? 0.6) : '') + (F.floorfix ? 'ff1' : '') + (F.floorfix2 ? 'ffx2_' + (+(F.ff2csig ?? 0.006)).toFixed(4) : '') + (F.ff2dbg ? 'dbg' : ''); };
     material.needsUpdate = true;
   }
   // Lamp glints for the mirror only. Cycles lamps have a size (radius 0.06 m on the corridor downlights, 0.04 to 0.05 on
@@ -848,8 +852,19 @@ vec3 rrFloorLobe(vec2 uv, vec2 ax, float s, float NoV, vec2 tw) {
       if (l.type === 'AREA') { const w = l.size || 1, h = (l.shape === 'RECTANGLE' || l.shape === 'ELLIPSE') ? (l.size_y || w) : w;
         const A = (l.shape === 'DISK' || l.shape === 'ELLIPSE') ? Math.PI * w * h / 4 : w * h;
         areas.push({ pos, q, w, h, c: col.multiplyScalar(P / (Math.PI * A)) }); }
-      else { const r = Math.max(l.radius ?? 0.1, 0.05); pts.push({ pos, r, c: col.multiplyScalar(P / (4 * Math.PI) / (Math.PI * r * r)) }); } }
+      // gjfix softfloor: point and spot glints drawn at least RR_FLAGS.softglintr (default 0.12 m) in radius at the same power, so
+      // the mirror shows a soft pool, not a 5 to 12 cm white pin (radiance falls with the area, the reflected energy stays)
+      // r2 (reviewer: the east hall rr_plain_floor, per tile roughness 0.04 to 0.16, still showed a dense field of small bright
+      // discs): soft glints are 0.25 m in radius (softglintr) at softglintk (default 0.8) of the lamp power, and fade to their
+      // rim (softglintp, default 2: a glow ball, not a hard disc), so even the near mirror tiles show a soft pool
+      else { const F2 = globalThis.RR_FLAGS || {}, r = Math.max(l.radius ?? 0.1, SOFTF() ? (+F2.softglintr || 0.25) : 0.05), ks = SOFTF() ? +(F2.softglintk ?? 0.8) : 1; pts.push({ pos, r, c: col.multiplyScalar(ks * P / (4 * Math.PI) / (Math.PI * r * r)) }); } }
     const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false, side: THREE.DoubleSide, fog: false });
+    if (SOFTF() && +((globalThis.RR_FLAGS || {}).softglintp ?? 2) > 0) { const pw = (+((globalThis.RR_FLAGS || {}).softglintp ?? 2)).toFixed(2);   // r2: rim fade (view facing share of the sphere)
+      mat.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vRrE;')
+          .replace('#include <project_vertex>', '#include <project_vertex>\n{ vec3 rrN = normal;\n#ifdef USE_INSTANCING\nrrN = mat3( instanceMatrix ) * rrN;\n#endif\nrrN = normalize( normalMatrix * rrN ); vRrE = abs( dot( rrN, normalize( -mvPosition.xyz ) ) ); }');
+        sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vRrE;')
+          .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= pow( clamp( vRrE, 0.0, 1.0 ), ' + pw + ' ) * ' + (1 + +pw / 2).toFixed(3) + ';'); };
+      mat.customProgramCacheKey = () => 'rrglintsoft' + pw; }
     const m4 = new THREE.Matrix4(), one = new THREE.Quaternion();
     if (pts.length) { const im = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 6), mat, pts.length);
       pts.forEach((p, i) => { im.setMatrixAt(i, m4.compose(p.pos, one, new THREE.Vector3(p.r, p.r, p.r))); im.setColorAt(i, p.c); });
