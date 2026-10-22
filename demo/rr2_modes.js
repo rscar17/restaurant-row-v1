@@ -33,13 +33,14 @@ export function closestOnPoly(x, y, poly) {
   return [bx, by, bd];
 }
 export const distToPoly = (x, y, poly) => closestOnPoly(x, y, poly)[2];
-export function insideWalk(x, y, walk) { return pointInPoly(x, y, walk.outer) && !walk.holes.some(h => pointInPoly(x, y, h)); }
-export function walkClearance(x, y, walk) { return Math.min(distToPoly(x, y, walk.outer), ...walk.holes.map(h => distToPoly(x, y, h))); }
+// walk.extra (agent look, Oct 20): more outer rings joined to the walk (the shopfront corridor east of the Palazzo line)
+export function insideWalk(x, y, walk) { return (pointInPoly(x, y, walk.outer) || (walk.extra || []).some(r => pointInPoly(x, y, r))) && !walk.holes.some(h => pointInPoly(x, y, h)); }
+export function walkClearance(x, y, walk) { return Math.min(distToPoly(x, y, walk.outer), ...(walk.extra || []).map(r => distToPoly(x, y, r)), ...walk.holes.map(h => distToPoly(x, y, h))); }
 // keeps a walker inside the corridor: a step that leaves the polygon slides along the edge it crossed
 export function clampToWalk(px, py, x, y, walk, eps = 0.02) {
   if (insideWalk(x, y, walk)) return [x, y];
   let q = null;
-  for (const ring of [walk.outer, ...walk.holes]) { const c = closestOnPoly(x, y, ring); if (!q || c[2] < q[2]) q = c; }
+  for (const ring of [walk.outer, ...(walk.extra || []), ...walk.holes]) { const c = closestOnPoly(x, y, ring); if (!q || c[2] < q[2]) q = c; }
   const dx = px - q[0], dy = py - q[1], L = Math.hypot(dx, dy);
   if (L > 1e-9) { const sx = q[0] + dx / L * eps, sy = q[1] + dy / L * eps; if (insideWalk(sx, sy, walk)) return [sx, sy]; }
   if (insideWalk(x, py, walk)) return [x, py];
@@ -57,6 +58,10 @@ export function clampToWalk(px, py, x, y, walk, eps = 0.02) {
 // fixed (reported as [name, 0, 'done']), a count outside n (the blendfix range; walkfix dropped 62) is not the known
 // defect (reported as [name, count, 'offcount'], nothing dropped).
 export const SUG_CORNER = [{ re: /^Mesh_1502(\.\d+)?$/, box: [-26.5, -18.2, -25.4, -17.1], n: [50, 80] }];
+// agent look (Oct 20), fix list F002/F003 (build named the pieces by rays on r9u/r9v): RR_FLAGS.fixf23 (default 1 in look) drops the
+// triangles wholly inside these plan boxes. F003: the Sugarcane spikes, big single Material_418 triangles of Mesh_1502 (x -32.5..-30.7,
+// y -20.2..-19.4, z 2.24..3.83) and small Mesh_1535 triangles there; F002: the Matteo bay bracket Mesh_1558 floating at 9.38,-10.48,2.71.
+export const FIX_F23 = [{ re: /^Mesh_1502(\.\d+)?$/, box: [-32.6, -20.3, -30.6, -19.3], z: [2.2, 3.9], n: [1, 200] }, { re: /^Mesh_1535(\.\d+)?$/, box: [-32.6, -20.3, -30.6, -19.3], z: [2.2, 3.9], n: [1, 1300] }, { re: /^Mesh_1558(\.\d+)?$/, box: [9.0, -10.8, 9.9, -9.4], z: [2.2, 3.9], n: [1, 60] }];   // z: Blender height range; n: expected count (outside it nothing is dropped)
 export function dropCornerTris(root, table = SUG_CORNER) {
   const rep = []; const v = new THREE.Vector3(); root.updateMatrixWorld(true);
   const found = new Map();   // table entry -> [[mesh, name, triangle starts inside]]
@@ -66,7 +71,7 @@ export function dropCornerTris(root, table = SUG_CORNER) {
     const g = o.geometry, P = g.attributes.position, I = g.index, n = I ? I.count : P.count, [x0, y0, x1, y1] = t.box;
     const inn = [];
     for (let i = 0; i + 2 < n; i += 3) { let inside = true;
-      for (let k = 0; k < 3; k++) { v.fromBufferAttribute(P, I ? I.getX(i + k) : i + k).applyMatrix4(o.matrixWorld); const bx = v.x, by = -v.z; if (!(bx > x0 && bx < x1 && by > y0 && by < y1)) { inside = false; break; } }
+      for (let k = 0; k < 3; k++) { v.fromBufferAttribute(P, I ? I.getX(i + k) : i + k).applyMatrix4(o.matrixWorld); const bx = v.x, by = -v.z; if (!(bx > x0 && bx < x1 && by > y0 && by < y1 && (!t.z || (v.y > t.z[0] && v.y < t.z[1])))) { inside = false; break; } }
       if (inside) inn.push(i); }
     (found.get(t) || found.set(t, []).get(t)).push([o, nm, inn]);
   });
@@ -254,11 +259,11 @@ export class RowModes {
   }
   // true when a three.js box (world) lies within m metres of the walk polygon
   nearWalk(bb, m = 1.0) {
-    const W = this.D.walk; if (!this._wb) { const xs = W.outer.map(p => p[0]), ys = W.outer.map(p => p[1]); this._wb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; }
+    const W = this.D.walk; if (!this._wb) { const all = [...W.outer, ...(W.extra || []).flat()], xs = all.map(p => p[0]), ys = all.map(p => p[1]); this._wb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; }
     const x0 = bb.min.x, x1 = bb.max.x, y0 = -bb.max.z, y1 = -bb.min.z, B = this._wb;
     if (x1 < B[0] - m || x0 > B[2] + m || y1 < B[1] - m || y0 > B[3] + m) return false;
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, hd = Math.hypot(x1 - x0, y1 - y0) / 2;
-    if (pointInPoly(cx, cy, W.outer)) return true;
+    if (insideWalk(cx, cy, W)) return true;
     for (const [x, y] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]]) if (pointInPoly(x, y, W.outer)) return true;
     for (const [x, y] of W.outer) if (x >= x0 - m && x <= x1 + m && y >= y0 - m && y <= y1 + m) return true;
     return distToPoly(cx, cy, W.outer) - hd < m;
@@ -272,6 +277,7 @@ export class RowModes {
     const D = this.D, bb = new THREE.Box3(); root.updateMatrixWorld(true); let n = 0;
     const units = D.units.filter(u => u.poly && u.poly.length > 2), omit = D.omit.polys;
     const FW = globalThis.RR_FLAGS || {}; if (+FW.sugcorner && !onlyUntagged) this.sugCorner = dropCornerTris(root);
+    if (+(FW.fixf23 ?? 0) && !onlyUntagged) this.fixF23 = dropCornerTris(root, FIX_F23);
     const big = []; this.milosBB = big;
     root.traverse(o => {
       if (!o.isMesh || (onlyUntagged && o.userData.rr) || o.userData.rrOwn) return; bb.setFromObject(o); if (bb.isEmpty()) return;

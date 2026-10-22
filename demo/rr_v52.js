@@ -31,10 +31,7 @@ if (S && rr && tabs) {
   // mirror the section state onto Ryan's tabs and cards (the section changes it by itself too: the automatic swap to 3D,
   // a label click in the overview, the walk reaching a restaurant)
   const sync = () => {
-    const sel = own.find(b => b.getAttribute('aria-selected') === 'true'); const t = sel ? sel.dataset.rrTab : 'map';
-    const view = t === 'map' ? 'flat' : t === '3d' ? '3d' : t === 'free' ? 'free' : 'walk';   // a restaurant view counts as the walk tab, as on v52
-    tabs.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
-    cards.forEach(c => c.setAttribute('aria-pressed', String(c.dataset.id === t)));
+    // page tab and card aria-pressed: rr_ui.js tabTick owns them
     const p = ownTab('3d') && ownTab('3d').querySelector('.rr-pct'); pct.textContent = p && p.textContent ? ' ' + p.textContent : '';
   };
   new MutationObserver(sync).observe(sec, { subtree: true, attributes: true, attributeFilter: ['aria-selected', 'aria-disabled'], characterData: true, childList: true });
@@ -113,6 +110,9 @@ if (S && rr && tabs) {
   const waitModes = setInterval(() => { if (S.modes && S.modes.D && S.modes.D.overview) { holdWhole(); clearInterval(waitModes); v52modes(S.modes); S.modes.on('mode', ui); } }, 50);
   new MutationObserver(ui).observe(sec, { subtree: true, attributes: true, attributeFilter: ['aria-selected', 'data-rr-ready'] });
   ui();
+  // the Ashcombe style overlay (rr_ui.js: glass dock, markers, info card, loader) drives the same functions
+  window.__rrV52 = { showWhole, showTop, setExpanded, ui, stage, v3, expand, hint, pad, CARDS };
+  import('./rr_ui.js').catch(e => console.warn('rr_ui', e));
   const status = sec.querySelector('[data-rr-status]');
   if (status && live) new MutationObserver(() => { live.textContent = status.textContent; }).observe(status, { childList: true, characterData: true, subtree: true });
 }

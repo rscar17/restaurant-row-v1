@@ -260,7 +260,7 @@ export class RoomLighting {
       sh.uniforms.uRoomMBox2 = { value: new THREE.Vector4(...(useK && mc.box2 ? mc.box2 : [1, 1, -1, -1])) };
       // up to ROOM_NZ extra zones (rgb factors on top of k, box2), identity boxes when unused; zg: room weight and height gate
       const zs = useK && mc.zones ? mc.zones.slice(0, ROOM_NZ) : [];
-      sh.uniforms.uRoomZB = { value: Array.from({ length: ROOM_NZ }, (_, i) => new THREE.Vector4(...(zs[i] ? zs[i].slice(0, 4) : [1, 1, -1, -1]))) };
+      sh.uniforms.uRoomZB = { value: Object.assign(Array.from({ length: ROOM_NZ }, (_, i) => new THREE.Vector4(...(zs[i] ? zs[i].slice(0, 4) : [1, 1, -1, -1]))), { _rrVer: 0 }) };   // constant (rr2_look array upload cache)
       sh.uniforms.uRoomZK = { value: Array.from({ length: ROOM_NZ }, (_, i) => new THREE.Vector3(...(zs[i] ? zs[i].slice(4, 7) : [1, 1, 1]))) };
       sh.uniforms.uRoomZG = { value: new THREE.Vector3(...(mc && mc.zg ? mc.zg : [-1e4, 1e4, 0])) };
       // glow mask (sugmask): identity edges and factors for every other material

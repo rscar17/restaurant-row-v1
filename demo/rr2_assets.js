@@ -96,6 +96,7 @@ export function queuedFetch(url, { priority = PRI.area, as = 'arrayBuffer' } = {
 //     is listed by memleanAudit() (it would draw black, it cannot crash: three skips a null image with a warning).
 // RR_FLAGS.lowtex (works with or without memlean): largest side of a bitmap texture after decode; 1 = 2048, a number
 // over 256 = that size. It only ever lowers the tier's RR_TEX_MAX.
+let IMG1K = null;   // agent look Oct 21: promise, true when data/img_1k/manifest.json exists
 const SHARED = new Map(); let sealed = false; const EVER = new Map(); // url -> { f: px, n: px } decoded orientations
 export const memStats = { decodes: 0, shared: 0, closed: 0, closedBytes: 0, redecodes: 0, lateVariants: 0 };
 const lean = () => (+((globalThis.RR_FLAGS || {}).memlean || 0) & 1) !== 0;
@@ -214,7 +215,13 @@ function sharedBitmapTexture(url, flipY, priority, getBlob = null) {
     // RR_FLAGS.smalltex (ship speed, side copy): a graph or shared GLB image under /img/ first loads its small copy from /img_s/
     // (same name, longest side 512, WebP); upgradeSmallTextures() swaps the full picture in after the view opens
     let fetchUrl = url; if (smallTier() && !getBlob && /\/img\//.test(url)) { fetchUrl = url.replace('/img/', '/img_s/'); e.small = { url, flipY, priority }; e.allUsers = new Set(); SMALLREG.push(e); }
-    e.ready = (getBlob ? getBlob() : queuedFetch(fetchUrl, { priority, as: 'blob' }))
+    // agent look Oct 21 (download): a tier that caps textures at 1024 (laptop policy lowtex 1024) decoded 2048 and 4096 px
+    // files only to shrink them; it now fetches the 1024 px copy from /img_1k/ (same name, made by ship's make_img1k.py with
+    // the same longest side) and falls back to /img/ when a copy is missing. Same pixels on screen, about 250 MB less.
+    const k1 = !e.small && M > 0 && M <= 1024 && +((globalThis.RR_FLAGS || {}).img1k ?? 1) && !getBlob && /\/img\//.test(url);
+    // used only when the folder carries img_1k/manifest.json (one HEAD request per page), so a package without the copies pays nothing
+    if (k1) IMG1K ??= fetch(url.replace(/\/img\/[^/]*$/, '/img_1k/manifest.json'), { method: 'HEAD' }).then(r => r.ok).catch(() => false);
+    e.ready = (getBlob ? getBlob() : (k1 ? IMG1K.then(ok => ok ? queuedFetch(url.replace('/img/', '/img_1k/'), { priority, as: 'blob' }).catch(() => queuedFetch(url, { priority, as: 'blob' })) : queuedFetch(url, { priority, as: 'blob' })) : queuedFetch(fetchUrl, { priority, as: 'blob' })))
       .then(b => decodeCapped(b, flipY, M))
       .then(bmp => { e.src.data = bmp; stats.bitmapImages++; const ev = EVER.get(url) || {}; ev[flipY ? 'f' : 'n'] = bmp.width * bmp.height; EVER.set(url, ev); for (const u of e.users) u.needsUpdate = true; maybeClose(e); })
       .catch(err => { e.error = String(err); for (const u of e.users) u.userData.error = e.error; });

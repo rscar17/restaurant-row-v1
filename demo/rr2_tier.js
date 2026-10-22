@@ -14,7 +14,7 @@
 // bitmap texture after decode (rr2_assets.js bitmapTexture; KTX2 and glTF embedded images are not resized).
 export const TIERS = {
   desktop: { dpr: 2, dprMin: 1, dprMax: 2, msaa: 4, reflect: 0.5, coveNSlot: 8, transmission: true, texMax: 8192, lite: false },
-  laptop: { dpr: 1.5, dprMin: 0.85, dprMax: 1.75, msaa: 4, reflect: 0.5, coveNSlot: 8, transmission: true, texMax: 4096, lite: false },
+  laptop: { dpr: 1.5, dprMin: 0.85, dprMax: 1.75, msaa: 0 /* agent look Oct 21: 4x MSAA on N8AO's beauty target cost 88 ms a frame on the Intel Arc (s85q: 137 -> 50 ms); SMAA stays */, reflect: 0.5, coveNSlot: 8, transmission: true, texMax: 4096, lite: false },
   phone: { dpr: 1.25, dprMin: 0.7, dprMax: 1.5, msaa: 0, reflect: 0, coveNSlot: 4, transmission: false, texMax: 2048, lite: true },
 };
 

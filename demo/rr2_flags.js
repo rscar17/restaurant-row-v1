@@ -52,6 +52,7 @@
 
 // m95 base plus the Oct 14 fixes (the m96_full set), as gputest.html would parse them from the URL
 export const SHIP_FLAGS = {
+  lm: 1,   // Ryan Oct 22: Cycles baked lighting on by default (rr_flags=lm%3D0 turns it off)
   // m95 base (idn=0.55 of that run is the iblDown player option, see SHIP_PLAYER)
   wallup: 1,
   wallupSkip: '^(mat_m2_rail|rr_beige_pier|mil_oak_reeded|rr_bead|rr_del_plaster|rr_del_cove_wash|rr_label_|mil_ceiling|del_plank|rot_drum|sugmv_|sug_ch_|gjl_rust|rot_rustband)',
@@ -77,6 +78,8 @@ export const SHIP_FLAGS = {
 // Flags that other agents are verifying on r8f data today (Oct 15). PLACEHOLDERS: each stays off for visitors until its
 // name is added to R8_PENDING_ON (one edit here, nothing else changes). The values are the ones of the laptop query
 // query_r8f.txt (agent build9), which has not been rendered on r8f data yet.
+// flags merged from look\pkg_look (section cut overview etc.); look=0 gives the demo23 overview
+Object.assign(SHIP_FLAGS, {look: 1, glintarea: 0, fixf23: 1});
 export const R8_PENDING = {
   // agent fixV: three r7 only clip boxes in rr2_floatfix2.js (Mesh_1491 track frame, Mesh_2226 and Mesh_2227 brass rods).
   // fixM parks the same pieces in the .blend, so on r8f data they should count 0 and report as done. PENDING: check
@@ -123,7 +126,7 @@ export const WAVE11_PENDING = {
 // Which data build this package was made and tested for. Documentation plus RR_SHIP.data; the section reads whatever is in
 // BASE/data (or data-rr-data). Any later build with the same folder layout and area names works with the same code;
 // check SHIP_AREA_LIST against its folders.
-export const SHIP_DATA = { build: 'dp22', pkg: 'v1', folder: 'data_plan22xd', status: 'data_plan22 (dp22) + GLB image dedupe + small texture tier + gzip area files', blend: 'restaurant-master_plan_r9u.blend', laptopFolder: 'wave13\\ship\\data\\data_plan22xd', caps: 'gpu_test\\data\\caps', areas: 16 };
+export const SHIP_DATA = { build: 'dplm2', pkg: 'v1', folder: 'data_lm2xd', status: 'data_lm2 (dplm2) + GLB image dedupe + small texture tier + gzip area files', blend: 'dplm2', laptopFolder: 'wave13\\ship\\data\\data_lm2xd', caps: 'gpu_test\\data\\caps', areas: 16 };
 // The one remaining capture dependency (DECISIONS A2.4 target: none). Documentation plus RR_SHIP.captureDependency.
 export const CAPTURE_DEPENDENCY = { now: 'data/caps (old B000..B085 RGBE + sh.json) lights and reflects the scene via rr2_probes/rr2_light',
   newCapturesShipped: false, replacement: 'lightmatch rr2_codelight.js (RR_FLAGS.codelight=1), not verified at 15:00 ET Oct 15',
@@ -167,7 +170,7 @@ export const SHIP_AREAS_HERO = areaStr(['gjM2c', 'mt21c', 'mt31c']);
 // the map only and never downloads the 3D (the 3D panel says why).
 export const SHIP_TIER_POLICY = {
   desktop: { areas: 'full', lowtex: 0 },       // discrete GPU: the laptop set as verified
-  laptop: { areas: 'full', lowtex: 1024 },     // integrated GPU, Macs, tablets: same scene, texture memory about 4.6 to 1.6 GB
+  laptop: { areas: 'full', lowtex: 0 },        // Ryan Oct 22: everything 4K, no 1024 cap (was lowtex 1024); the tier's own cap (4096) applies
   phone: { map: true },                        // no phone tier fits yet (see CHANGES.md); data-rr-phone="hero" tries one
   lowmem: { map: true }                        // navigator.deviceMemory 4 or less (Chromium), any tier
 };

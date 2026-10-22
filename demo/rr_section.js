@@ -46,11 +46,11 @@ import { SHIP_PLAYER, SHIP_AREAS, SHIP_AREAS_HERO, SHIP_TIER_POLICY, SHIP_PHONE_
 import { detectTier, TIERS } from './rr2_tier.js';
 // the viewer (three.js and the rr2 modules, about 4 MB) is imported only once the device policy allows the 3D, so a
 // phone that keeps the map loads none of it (agent ship8). These names are filled by loadViewer().
-let THREE, RowPlayer, RowModes, pointInPoly, distToPoly, assets;
+let THREE, RowPlayer, RowModes, pointInPoly, distToPoly, assets, installLook;
 async function loadViewer() {
   if (RowPlayer) return;
-  const [T, pl, md, as] = await Promise.all([import('three'), import('./rr2_player.js'), import('./rr2_modes.js'), import('./rr2_assets.js')]);
-  THREE = T; RowPlayer = pl.RowPlayer; RowModes = md.RowModes; pointInPoly = md.pointInPoly; distToPoly = md.distToPoly; assets = as;
+  const [T, pl, md, as, lk] = await Promise.all([import('three'), import('./rr2_player.js'), import('./rr2_modes.js'), import('./rr2_assets.js'), import('./rr2_look.js')]);
+  THREE = T; RowPlayer = pl.RowPlayer; RowModes = md.RowModes; pointInPoly = md.pointInPoly; distToPoly = md.distToPoly; assets = as; installLook = lk.installLook;
 }
 
 const BASE = new URL('./', import.meta.url).href;
@@ -151,6 +151,7 @@ function setup(root) {
     hint.textContent = msg; hint.hidden = false; clearTimeout(st.hintT); st.hintT = setTimeout(() => { hint.hidden = true; }, 6000);
   }
   function select(t, { auto = false } = {}) {
+    if (st.failed && t !== 'map') return;
     if (t === 'map' && !auto) st.userPickedMap = true;
     if (t !== 'map' && !st.ready) {
       // 3D not ready yet: stay on the map; the choice is remembered and opens when the 3D is ready
@@ -223,6 +224,8 @@ function setup(root) {
       const P = st.P = new Cls(canvas, { basis: BASE + 'vendor/three/examples/jsm/libs/basis/', onProgress: () => {}, ...SHIP_PLAYER, profile: { name: 'swoogo-section', keysNeedFocus: true, wheelModifier: true } });
       // the modes controller hooks into the load (unit tags before merging, collision near the corridor), so it is made first
       const M = st.M = new RowModes(P, { host: panel3d });
+      // agent look (Oct 19): RR_FLAGS.look installs the clip planes and the program deferral before the load (rr2_look.js)
+      if (+(F.look ?? 0)) { st.LK = installLook(P, M, { ungrade: (h) => ungrade(h, P.exposureEV ?? 0.08), flags: F }); LOOK.bg = '#f4f7f9'; }
       st.tier = P.tier ? { name: P.tier.name, why: P.tier.why } : null;
       if (prog) prog.hidden = false; setPct(0);
       P.on('progress', (d) => { if (!d) return; st.phase = d.phase || st.phase;
@@ -241,6 +244,7 @@ function setup(root) {
       st.modesInit = M.init(); lap('modesInit');
       scopeModeKeys(M); wallClock(M); trackMode(M); trackPerf(P, M);
       if (lookMode === 'cutaway') { st.look = cutaway(P, M); lap('look'); }
+      if (st.LK) { st.lookInit = st.LK.init(); lap('lookInit'); }
       st.loaded = true;
       if (st.readyEv || !P.gate) finish();
     } catch (e) { fail(e); }
@@ -283,7 +287,7 @@ function setup(root) {
     if (ul) {
       const g = ul.geometry, pos = g.attributes.position, n = pos.count, keep = [];
       for (let i = 0; i < n; i += 6) { let cx = 0, cz = 0; for (let k = 0; k < 6; k++) { cx += pos.getX(i + k); cz += pos.getZ(i + k); } cx /= 6; const by = -cz / 6;
-        const ok = (pointInPoly(cx, by, W.outer) || distToPoly(cx, by, W.outer) < 1.5) || units.some(u => pointInPoly(cx, by, u.poly));
+        const ok = (pointInPoly(cx, by, W.outer) || distToPoly(cx, by, W.outer) < 1.5 || (W.extra || []).some(r => pointInPoly(cx, by, r) || distToPoly(cx, by, r) < 1.5)) || units.some(u => pointInPoly(cx, by, u.poly));
         if (ok) keep.push(i); }
       const ng = new THREE.BufferGeometry();
       for (const [name, a] of Object.entries(g.attributes)) { const s = a.itemSize, arr = new a.array.constructor(keep.length * 6 * s);
@@ -391,7 +395,7 @@ function setup(root) {
   if (reduced) root.setAttribute('data-rr-reduced', '');
 
   // debug and test hooks: RowSection.alt('gjelina', true) uses the other facade framing for that restaurant
-  const api = root.__rr = { state: st, select, start: () => ensureStart('api'), get player() { return st.P; }, get modes() { return st.M; },
+  const api = root.__rr = { state: st, select, get THREE() { return THREE; }, start: () => ensureStart('api'), get player() { return st.P; }, get modes() { return st.M; },
     perf: () => (st.perfSummary ? st.perfSummary() : null),
     alt(id, on = true) { const M = st.M; if (!M) return; (M.heroAlt ||= {})[id] = on; if (st.active === id) M.view(id); } };
   return api;

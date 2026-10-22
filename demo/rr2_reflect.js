@@ -354,6 +354,10 @@ vec3 rrRibN( const in vec3 ng, const in float s ) { return normalize( mix( ng, n
     if (new RegExp(F.lowglassfre || '^mt_frost(\\.\\d+)?$').test(material.name || '')) glassD.value = (1 - w) * THREE.MathUtils.clamp(+(F.lowglassk ?? 0.55), 0, 1);
     if (new RegExp(F.lowglassrre || '^mt_glass(\\.\\d+)?$').test(material.name || '')) material.userData.lowglassR = THREE.MathUtils.clamp(+(F.lowglassr ?? 0.12), 0, 1);
   }
+  // agent look Oct 21 (main, c32p37 fronts against donutique_17 and illy_14): the illy and Donutique storefront panes
+  // (int_mb_glass, the generic unit glass of the build's fills) read milky with blurred interiors; Ryan's photos show clear
+  // glass. Those panes pass RR_FLAGS.clearglassT (default 0.9) with no diffuse share. Hero glass keeps its own fits.
+  if (+(F.clearglass ?? 1) && !glassEmit && new RegExp(F.clearglassre || '^int_mb_glass(\.\d+)?$').test(material.name || '')) { glassT.value = Math.max(glassT.value, +(F.clearglassT ?? 0.97)); glassD.value = 0; }
   material.userData.glassT = glassT.value; material.userData.glassDiffuse = glassD.value; material.userData.frost = frost;
   // black glass (a metallic share and almost nothing let through: the base panels behind Matteo's lower reeded band,
   // Material_398, and the black cladding Material_30 to _40 / _86) is drawn at the end of the opaque pass instead of with
@@ -363,6 +367,7 @@ vec3 rrRibN( const in vec3 ng, const in float s ) { return normalize( mix( ng, n
   material.transmission = 0; material.thickness = 0;
   material.transparent = true; material.opacity = 1; material.depthWrite = false;
   material.metalness = 0; material.roughness = frost > 0 ? r0 : Math.min(r0, w > 0.9 ? 0.05 : 1);
+  if (glassD.value === 0 && +(F.clearglass ?? 1) && new RegExp(F.clearglassre || '^int_mb_glass(\.\d+)?$').test(material.name || '')) { material.roughness = Math.max(material.roughness, +(F.clearglassR ?? 0.08)); material.envMapIntensity = (material.envMapIntensity ?? 1) * +(F.clearglassE ?? 0.05); }   // s66/s67: the probe cube reflection read as a milky white sheet with white specks (floor glints) over the interior; a dimmer, slightly blurred reflection
   if (material.userData.lowglassR !== undefined) material.roughness = Math.max(material.roughness, material.userData.lowglassR);
   material.ior = ior; material.specularIntensity = 1;
   // premultiplied: ONE / ONE_MINUS_SRC_ALPHA; alpha is the share of what is behind that the pane hides
@@ -473,6 +478,9 @@ float glassFresnelThin(float ci, float n) {
 // along the stretch axis; a two level tail keeps the GGX halo.
 // mirror switch of FloorReflector.patch: 1 on a mirror floor, 0 on a material that only carries the code (unifyVariants)
 const FLOOR_ON = { value: 1 }, FLOOR_OFF = { value: 0 };
+// agent look Oct 21: the mirror switch shared by every live floor material; rr2_look turns it off during glides (the frozen
+// mirror still holds the overview view, its texture matrix maps the ground floor onto black: the dark wedge, fix list 29)
+export const FLOOR_MIRROR_ON = FLOOR_ON;
 let _floorBlack = null;
 const floorBlack = () => (_floorBlack ||= { value: Object.assign(new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1), { needsUpdate: true }) });
 // ?floorblur=1: a vanilla port of drei's MeshReflectorMaterial blur (BlurPass, ConvolutionMaterial), done as a dual
@@ -552,8 +560,12 @@ export class FloorReflector {
   setSize(renderer) {
     const s = renderer.getDrawingBufferSize(new THREE.Vector2()).multiplyScalar(this.scale);
     const w = Math.max(2, Math.round(s.x)), h = Math.max(2, Math.round(s.y));
-    if (w !== this.rt.width || h !== this.rt.height) this.rt.setSize(w, h);
+    if (w !== this.rt.width || h !== this.rt.height) { this.rt.setSize(w, h); this.renew(); }
   }
+  // agent light (handoff Oct 16, ported by agent look): a resized or reused mirror target went incomplete (GL 1286: its depth
+  // texture kept the old size), the mirror pass then drew nothing; a fresh target with a fresh depth texture at the same size
+  renew() { const w = this.rt.width, h = this.rt.height, old = this.rt; this.rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, depthTexture: new THREE.DepthTexture(w, h, THREE.UnsignedIntType) });
+    this.rt.texture.anisotropy = old.texture.anisotropy; this.tex.value = this.rt.texture; this.depth.value = this.rt.depthTexture; if (old.depthTexture) old.depthTexture.dispose(); old.dispose(); }
   // on = false: the mirror code switched off (unifyVariants, rr2_probes.js), so floor and non floor materials of one
   // structure share a program. A switched off material binds uFloorOn 0, which zeroes rrGate and skips the whole block
   // (the capture reflection stays exactly as it was), and black 1 x 1 stand ins for the mirror targets it never samples;
@@ -830,6 +842,9 @@ vec3 rrFloorLobe(vec2 uv, vec2 ax, float s, float NoV, vec2 tw) {
       const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(); M.decompose(pos, q, sc);
       if (pos.y < 1.5) continue;
       const P = l.energy * ((l.node_strength && l.node_strength[0]) ?? 1) * k, col = new THREE.Color(l.color[0], l.color[1], l.color[2]);
+      // glintarea=0 (agent light fl3/fl4, ported by agent look): the broad white smears on the corridor floor were AREA lamp glints
+      // (sign and room helper area lights Cycles does not show in the floor); point and spot glints stay (the lamp dots)
+      if (l.type === 'AREA' && !+((globalThis.RR_FLAGS || {}).glintarea ?? 1)) continue;
       if (l.type === 'AREA') { const w = l.size || 1, h = (l.shape === 'RECTANGLE' || l.shape === 'ELLIPSE') ? (l.size_y || w) : w;
         const A = (l.shape === 'DISK' || l.shape === 'ELLIPSE') ? Math.PI * w * h / 4 : w * h;
         areas.push({ pos, q, w, h, c: col.multiplyScalar(P / (Math.PI * A)) }); }

@@ -31,6 +31,7 @@ import { RoomLighting } from './rr2_rooms.js';
 import { CaptureCache, queuedFetch, PRI, stats as assetStats, netQueue, memleanSeal, memleanAudit, memleanGLTFPlugin, memleanMark, memleanAreaDone, upgradeSmallTextures, smallStats } from './rr2_assets.js';
 import { pickTier, DprGovernor } from './rr2_tier.js';
 import { ProgramGate } from './rr2_gate.js';
+import { lmOn, loadLightmaps, applyLightmaps } from './rr2_lightmap.js';
 // The exact look of Ryan's Cycles 360s (meta.json "grade"): 0.75 x Khronos PBR Neutral at -0.35 EV + 0.25 x AgX with the
 // Punchy look at -0.25 EV, mixed in display space. Checked against Blender 5.2's own OCIO processors (PyOpenColorIO in
 // Blender, 209k linear pixels sampled from all 34 captures): the Neutral part matches to 0.33 of 255; the AgX part is an
@@ -342,6 +343,7 @@ export class RowPlayer {
     if ((globalThis.RR_FLAGS || {}).lightloop) this.report.lightLoopsDyn = dynamicLightLoops(); // rr2_lightloop.js
     this.report.shField = await loadSHField(capsUrl + '/sh.json');
     let i = 0; const tl = this.report.timeline = []; const t0 = performance.now(); const mark = (m) => tl.push([+((performance.now() - t0) / 1000).toFixed(2), m]);
+    if (lmOn() && !this.lmData && !this.lmPromise) { this.lmPromise = loadLightmaps((globalThis.RR_FLAGS || {}).lmurl || 'data/lm/lm.json'); this.lmPromise.catch(() => {}); }   // main 04:3x: atlases download alongside the GLBs
     // every section's files are requested up front through one priority queue (the start section first, outer
     // sections after); materials and lighting are then applied section by section in order while later downloads run
     const center = this.walkCenter ? [this.walkCenter.x, -this.walkCenter.z] : null;
@@ -834,6 +836,9 @@ export class RowPlayer {
     // hook: rr2_modes tags units and ceilings before groups merge (after the crack backing, so its copies carry the same tags)
     if (this.beforeMerge) this.beforeMerge(this.root);
     mark('pass beforeMerge');
+    // main 03:4x (ship found it): lightmaps go on BEFORE mergeStatic, which folds meshes into nameless 'merged:<material>' meshes;
+    // baked copies are cached per source material and atlas, so the merge key keeps baked with baked of the same atlas
+    if (lmOn()) { try { this.lmData ||= await (this.lmPromise || loadLightmaps((globalThis.RR_FLAGS || {}).lmurl || 'data/lm/lm.json')); this.report.lightmap = applyLightmaps(this.root, this.lmData); mark('lightmaps applied'); } catch (e) { (this.report.errors ||= []).push('lightmap: ' + e.message); } }
     this.mergeStatic();
     mark('pass mergeStatic');
     // black glass (rr2_reflect.js thinGlass, glassLate) is drawn at the end of the opaque pass, after everything opaque it
@@ -983,6 +988,9 @@ export class RowPlayer {
     // shaders: everything within 15 m of the start compiles before the view opens; the rest compiles in the background,
     // nearest first, and each object appears only once its shader is ready (no frozen frames while looking around)
     const start = this.walkCenter ? this.walkCenter.clone().setY(1.6) : this.camera.position.clone();
+    // lightmaps (agent look, Oct 21; RR_FLAGS.lm = 1, RR_FLAGS.lmareas, rr2_lightmap.js): baked surfaces swap to base colour x
+    // Cycles lightmap copies before the programs are listed, so the gate compiles the baked versions in their place
+    if (lmOn() && this.lmData) for (const a of Object.values(this.lmData.areas)) this.renderer.initTexture(a.tex);   // main 03:4x: applied before the merge
     const byMat = new Map(); const bs = new THREE.Box3();
     this.root.traverse(o => { if (!o.isMesh) return; bs.setFromObject(o); const d = bs.distanceToPoint(start);
       const e = byMat.get(o.material) || { d: Infinity, meshes: [] }; e.d = Math.min(e.d, d); e.meshes.push(o); byMat.set(o.material, e); });
@@ -992,7 +1000,10 @@ export class RowPlayer {
     // lighting: a handful of programs), while the real Blender programs compile in the background, nearest first, on a
     // small proxy scene per batch; each object switches to its real material the moment its program is ready.
     const order = [...byMat.entries()].sort((a, b) => a[1].d - b[1].d).map(([m]) => m);
-    const near = order.filter(m => byMat.get(m).d <= 15), far = order.filter(m => byMat.get(m).d > 15);
+    // main 04:2x (ship, windowed Intel): baked [lm] copies compiling in the background stalled the walk (12 to 16 programs in 3 s); they are
+    // light programs (no live lighting), so all of them compile before the view opens
+    const isNear = (m) => byMat.get(m).d <= 15 || !!m.userData?.lmBaked && / \[lm\]$/.test(m.name || '');
+    const near = order.filter(isNear), far = order.filter(m => !isNear(m));
     this.byMat = byMat; this.readyMats = null;
     this.report.materialsNear = near.length; this.report.materialsFar = far.length;
     if (this.deferCompile) { this.renderer.setRenderTarget(prevRT); this.prepareCulling(); mark('view ready (compile deferred)'); this.compiling = Promise.resolve(); this.onProgress(''); return; }

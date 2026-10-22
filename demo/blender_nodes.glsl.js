@@ -75,15 +75,16 @@ float bl_snoise3(vec3 p) {
 }
 float bl_fbm3(vec3 p, float detail, float roughness, float lacunarity, bool normalize) {
   float fscale = 1.0, amp = 1.0, maxamp = 0.0, sum = 0.0;
+  float fw = length(fwidth(p));   // agent look Oct 21: octaves finer than about a pixel fade to their mean (white specks on the limestone returns at grazing angles)
   int n = int(detail);
   for (int i = 0; i <= 15 * blL1; i++) {
     if (i > n) break;
-    float t = bl_snoise3(fscale * p);
+    float t = bl_snoise3(fscale * p) * (1.0 - smoothstep(0.35, 0.7, fw * fscale));
     sum += t * amp; maxamp += amp; amp *= roughness; fscale *= lacunarity;
   }
   float rmd = detail - floor(detail);
   if (rmd != 0.0) {
-    float t = bl_snoise3(fscale * p);
+    float t = bl_snoise3(fscale * p) * (1.0 - smoothstep(0.35, 0.7, fw * fscale));
     float sum2 = sum + t * amp;
     return normalize ? mix(0.5 * sum / maxamp + 0.5, 0.5 * sum2 / (maxamp + amp) + 0.5, rmd) : mix(sum, sum2, rmd);
   }
@@ -397,10 +398,11 @@ const _chunks = (() => {
 export const BLENDER_NOISESPEC_GLSL = /* glsl */ `
 float bl_fbm3i(vec3 p, float detail, float roughness, float lacunarity, bool normalize) {
   float fscale = 1.0, amp = 1.0, maxamp = 0.0, sum = 0.0;
+  float fw = length(fwidth(p));   // agent look Oct 21: octaves finer than about a pixel fade to their mean (white specks on the limestone returns at grazing angles)
   int n = int(detail);
   for (int i = 0; i <= 15 * blL1; i++) {
     if (i > n) break;
-    float t = bl_snoise3(fscale * p);
+    float t = bl_snoise3(fscale * p) * (1.0 - smoothstep(0.35, 0.7, fw * fscale));
     sum += t * amp; maxamp += amp; amp *= roughness; fscale *= lacunarity;
   }
   return normalize ? 0.5 * sum / maxamp + 0.5 : sum;

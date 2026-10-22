@@ -721,6 +721,7 @@ ${WU ? (() => { const FW = globalThis.RR_FLAGS || {}, t = FW.wallupT || WALLUP.t
     if (!force && this.lastPos && this.lastPos.distanceToSquared(camPos) > jump * jump) force = true;
     if (force) this.frame = 1; else if ((this.frame++ % 15) !== 0) return;
     this.updates = (this.updates || 0) + 1; (this.lastPos ||= new THREE.Vector3()).copy(camPos);
+    for (const u of [this.uP, this.uL, this.uN, this.uSA, this.uSB, this.uSL, this.uSP, this.uDP, this.uDC]) if (u) u.value._rrVer = this.updates;   // agent look Oct 21: array version, rr2_look skips re-uploading unchanged arrays (uniform4fv was the top CPU cost in glides)
     if (this.dls.length) {
       const len = (globalThis.RR_FLAGS || {}).dlLen ?? DLG.len;
       const near = this.dls.map(d => [d, d.p.distanceToSquared(camPos)]).sort((a, b) => a[1] - b[1]).slice(0, ND); this.uND.value = near.length;
