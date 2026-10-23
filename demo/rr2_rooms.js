@@ -8,6 +8,8 @@
 // smooth across a cell border (linear filtered gain textures), so a floor running through a door has no step.
 // One extra code block and two texture reads in every opaque program; no material clones, no extra programs.
 import * as THREE from 'three';
+import { gjfix3Apply } from './rr2_gjfix3.js';   // hero builder 2 (Oct 22 evening): Gjelina canopy, pass counter, kitchen glass, bar
+import { milr4Apply } from './rr2_milr4.js';   // agent milr4 (Oct 22 evening): Milos interior pieces replaced by 018.glb
 
 // interior groups per room (inventory row .group), as used for the map
 export const ROOM_GROUPS = {
@@ -140,8 +142,9 @@ export const ROOM_OBJCAL_M78 = {
   Mesh_2249: { room: 'milos', k: [1, 1, 1], col: [0.84, 0.79, 0.69], lmc: [1.0, 0.97, 0.92], box: MIL_BOX },   // main 15:4x: constant baked light (rtdebug: black texels in its miloak2 chart at the kitchen end)
      // milosint Oct 22: shell walls and ceiling (Material_110, peach plaster photo) read warm cream like Ryan's photos; was k 0.55 (fit to the old dark 360s)
   Mesh_2253: { room: 'milos', k: [0.65, 0.65, 0.65], box: MIL_BOX },   // dark wood trim (Material_107), 0.62
+  m2_pier: { room: 'milos', k: [1, 1, 1], col: [0.86, 0.85, 0.82], plain: 1, box: MIL_BOX },   // main Oct 23: the box projected vein map read as grey grain on the pier; pale stone like the 1022 photo, baked light kept
   Mesh_2265: { room: 'milos', k: [1.6, 1.6, 1.6], col: [0.86, 0.84, 0.78], plain: 1, box: MIL_BOX },   // milosint Oct 22: the recess walls around the round downlight cans read as dark brown rings; cream like the ceiling (was terracotta, k 0.65)
-  Mesh_2248: { room: 'milos', col: [0.62, 0.47, 0.32], flat: 1, planks: [0.19, 1.6], box: MIL_BOX },   // milosint Oct 22: Milos floor, the oak veneer photo tiled into metre wide swirls; light oak planks about 0.19 m (milos_front_straight_pots_ryan_1022.webp)
+  Mesh_2248: { room: 'milos', col: [0.46, 0.30, 0.17], flat: 1,   /* milr4: warm mid oak (was 0.62 0.47 0.32) */ planks: [0.19, 1.6], box: MIL_BOX },   // milosint Oct 22: Milos floor, the oak veneer photo tiled into metre wide swirls; light oak planks about 0.19 m (milos_front_straight_pots_ryan_1022.webp)
   Mesh_1647: { k: [1.35, 1.35, 1.35], box: MIL_BOX },   // no room gate: its bbox centre lands 1 cm outside the Milos mask (m80/m81: 0 hits); the shader still limits it to Milos cells   // white west wall (Material_617), 1.38
   Mesh_352: { room: 'milos', k: [1.4, 1.4, 1.4], col: [0.80, 0.80, 0.78], flat: 1, lmc: [1.15, 1.1, 1.05], box: MIL_BOX },   // flat + constant baked light: the streaks stayed with col alone (its lightmap chart)
         // white marble round bar front, 1.49; milosint Oct 22: clean white (its noise marble drew horizontal streaks)
@@ -159,8 +162,11 @@ export const ROOM_OBJCAL_M78 = {
 export const ROOM_OBJCAL_RE = (globalThis.RR_FLAGS || {}).nomilint ? [] : [
   [/^mil_bt6$/, { room: 'milos', col: [0.80, 0.79, 0.76], flat: 1, clips: [['z', '<', 0.55]] }],   // banquette cloth hanging to the floor like a sheet: hem cut at 0.42 m (ahead of the cloth pattern: first match wins)
   [/^((md\d+_)?mi_cloth\d+|mil_bt\d+)$/, { room: 'milos', col: [0.80, 0.79, 0.76], flat: 1, lmc: [1.0, 0.96, 0.9], clips: [['z', '<', 0.55]] }],   // r2: the reviewer's floor length sheet is md0_mi_cloth0 (x -2 to 0, y 3.8 to 5.9, the int_y090 view), not mil_bt6: every Milos cloth now ends 0.35 m under its 0.9 m top   // lmc: rr2_lightmap.js constant light, their lightmap charts are pixel noise; white linen (Material_740 is cream 0.80 0.75 0.64 with noise)
-  [/^r135_ceil163$/, { room: 'milos', k: [1.6, 1.6, 1.6], col: [0.88, 0.87, 0.83], plain: 1, lmc: [1.0, 0.98, 0.95], clips: [['x', '>', 4.25]], dl: [2.4, 0.3, 0.3, 0.07, 6] }],   // 11:xx: stops at the Delmonico wall (x 4.25); downlights on a 2.4 m grid
+  [/^r135_ceil163$/, { room: 'milos', k: [1.6, 1.6, 1.6], col: [0.88, 0.87, 0.83], plain: 1, lmc: [0.60, 0.54, 0.45],   /* milr4: warm grey beige like the bar photo (was 1.0 0.98 0.95) */ clips: [['x', '>', 4.25]], dl: [2.4, 0.3, 0.3, 0.07, 6] }],   // 11:xx: stops at the Delmonico wall (x 4.25); downlights on a 2.4 m grid
   [/^r136_ceil66\.001$/, { col: [0.88, 0.87, 0.83], colx: ['<', 4.25], k: [1.6, 1.6, 1.6], box: [-17.5, -16.0, 4.25, 25.0] }],   // r2 (reviewer: black slivers at the kitchen end): no longer cut; r135_ceil163 has gaps there that only this plane covered. West of x 4.25 it now takes the Milos ceiling white (12 mm above the lowered Milos plane, so no z fight); Delmonico side unchanged   // Delmonico's ceiling plane runs west to x -5 at the same 3.3 m as the Milos one: the jagged taupe z fight over the Milos dining room and kitchen end
+  [/^(Mesh_1502|sugmv_Mesh_1493|Mesh_1552|sug_corner_pier|Mesh_1535(__v2cut)?|Mesh_1536|mbf_w1(2[5-9]|3\d|4[0-4])|cl_wh_nwall)$/, { col: [0.88, 0.85, 0.78], plain: 1, box: SUG_BOX }],   // main Oct 23 (Ryan: Sugarcane wall not that colour): cream plaster like sugarcane_left_yardbird_right_turn, was an orange photo texture
+  [/^(rn_)?Mesh_(1503|1544)$/, { col: [0.84, 0.82, 0.77], plain: 1, lmc: [0.85, 0.8, 0.72] }],   // main Oct 23 (bake check: south aisle soffit band baked near black, lum 31 to 43, a visible corridor ceiling; not a hero room): cream at the corridor ceiling's light
+  [/^(?!Mesh_149[14]$)/, { mat: /^(Material_109|Material_624)(\.\d+)?$/, col: [0.84, 0.82, 0.77], plain: 1 }],   // main Oct 23 (hunt R6: dark slab soffits all along the row): the upper ceiling layers above the coffers were near black (0.018 / 0.10), seen through every coffer edge; cream like the photos
   [/^milbar_top$/, { room: 'milos', lmc: [1.1, 1.08, 1.05] }],   // main 15:4x: the radial fan is baked into its milbar3 chart (rtdebug); constant light keeps the quartzite texture
   [/^r136_f65$/, { col: [0.80, 0.76, 0.67], flat: 1, lmc: [1.0, 0.97, 0.92] }],   // Delmonico shell wall standing inside the Milos dining room (x -5.2 to 1.8, y 7.4 to 28.4): its baked plaster read dark chocolate; cream like the Milos walls
   [/^r136_f64$/, { col: [0.70, 0.66, 0.58], flat: 1, lmc: [1.0, 0.97, 0.92] }],   // its walnut wainscot below 1.15 m, same
@@ -173,7 +179,7 @@ export const ROOM_OBJCAL_RE = (globalThis.RR_FLAGS || {}).nomilint ? [] : [
 // glow strip lying on the floor along the round bar (the photos show the bar FRONT lit, not the floor); the mil_*_rope rings
 // of the restored amphorae came out about 2.8 m wide and up to 0.85 m under the floor (the jar bodies mil_pithos, mil_pithosT,
 // mil_jarS, mil_pithosL are the right 1 m size and stay). RR_FLAGS.nomilhide keeps them.
-export const ROOM_HIDE_RE = (globalThis.RR_FLAGS || {}).nomilhide ? null : /^(r9zz2_mil_understrip|mil_(pithos|pithosT|pithosL|jarS)_rope\d+)$/;
+export const ROOM_HIDE_RE = (globalThis.RR_FLAGS || {}).nomilhide ? null : /^(r9zz2_mil_understrip|mil_(pithos|pithosT|pithosL|jarS)_rope\d+|mil_pithos|m2_jE|delh_rack_00_\w+|del_winewall_A_\w+|r9zzp_yb_beam\d+)$/;   // main Oct 23: mil_pithos stood inside bar stools 7 and 8 (right window; Ryan's 1022 photo has the jars only in the left window); m2_jE a gold post mid right bay the photos do not show
 // cotegj (Oct 22, Ryan's COTE and Gjelina photos, W\inspect\photocmp_1022 A18 A05 A06): entries as above plus
 //   mat: regex on the material name (a mesh with several materials, e.g. the grill table's stone top and brass grill)
 //   kx: factor on reflected light anywhere (COTE has no room mask, so k cannot reach it); em: added emission, linear rgb
@@ -447,11 +453,24 @@ export class RoomLighting {
   }
   patchAll(root) {
     const done = new Set(); let n = 0, cells = 0, nObj = 0;
+    let milr4N = 0; try { milr4N = milr4Apply(root); } catch (e) { console.warn('milr4', e); }   // agent milr4 (Oct 22 evening), see rr2_milr4.js
     let nHide2 = 0; if (ROOM_HIDE_RE2) root.traverse(o => { if (o.isMesh && ROOM_HIDE_RE2.test(o.userData.invName || o.name)) { o.visible = false; o.userData.cotegjHidden = [o.geometry.drawRange.start, o.geometry.drawRange.count]; o.geometry.setDrawRange(0, 0); nHide2++; } });   // cotegj: hidden, kept in the scene
     // cotefix: taken out like ROOM_HIDE_RE (not by draw range: 004.glb primitives share position accessors, so three shares their geometry with kept sets)
     let nHideC = 0; if (COTE_HIDE_RE) { const gone = []; root.traverse(o => { if (o.isMesh && COTE_HIDE_RE.test(o.userData.invName || o.name)) gone.push(o); }); for (const o of gone) { o.visible = false; o.removeFromParent(); nHideC++; } }
     let nHide = 0; if (ROOM_HIDE_RE || MILBAR_HIDE_RE) { const gone = []; root.traverse(o => { const nm = o.userData.invName || o.name; if (o.isMesh && ((ROOM_HIDE_RE && ROOM_HIDE_RE.test(nm)) || (MILBAR_HIDE_RE && MILBAR_HIDE_RE.test(nm)))) gone.push(o); });
       for (const o of gone) { o.visible = false; o.removeFromParent(); nHide++; } }
+    // main Oct 23 (Ryan: the inlay outside Delmonico is narrower than the one behind it): fld_FE / fld_FW were 3.3 m wide in a
+    // 9.4 m and 6.4 m corridor (fld_M2 at Milos: 8.4 m in 8.7 m, as in IMG_5420 / IMG_5433). Each field and its rose border
+    // brd_* is widened across the corridor (Blender c = -0.3779, 0.9258) to the wall distances raycast in r9ze4_lm_v3b, 0.6 m
+    // short of each wall; vertices move outward by a constant, so the border band keeps its width. The pattern is world mapped.
+    // shortcut: off by default; the coffers above are just as narrow, so the model fix (floor, border, tray, ceiling opening, re-bake) replaces this
+    if (+((globalThis.RR_FLAGS || {}).fldwide || 0)) { const FW = { FE: [19.92, -1.27, 4.85, 4.57], FW: [11.3, -5.02, 2.0, 4.36] }, cx = -0.3779, cy = 0.9258;
+      root.traverse(o => { const m = /^(fld|brd)_(FE|FW)$/.exec(o.userData.invName || o.name); if (!o.isMesh || !m) return; const [X, Y, dp, dn] = FW[m[2]];
+        o.updateWorldMatrix(true, false); const P = o.geometry.attributes.position, inv = o.matrixWorld.clone().invert(), v = new o.position.constructor();
+        const tp = dp - 0.6, tn = dn - 0.6, hw = 1.64;   // field half width now 1.64; target edges at +tp and -tn along c
+        for (let i = 0; i < P.count; i++) { v.fromBufferAttribute(P, i).applyMatrix4(o.matrixWorld); const bx = v.x, by = -v.z, d = (bx - X) * cx + (by - Y) * cy;
+          const nd = d >= 0 ? d + (tp - hw) : d - (tn - hw); const nx = bx + (nd - d) * cx, ny = by + (nd - d) * cy; v.set(nx, v.y, -ny).applyMatrix4(inv); P.setXYZ(i, v.x, v.y, v.z); }
+        P.needsUpdate = true; o.geometry.computeBoundingBox(); o.geometry.computeBoundingSphere(); }); }
     // milosint r3 (reviewer: black slivers at the Milos kitchen end ceiling): one plain near white plane 2.5 cm above the Milos
     // ceiling r135_ceil163 (3.288 m after its 12 mm drop; Delmonico's r136_ceil66.001 at 3.3 m), Milos room only: Blender
     // x -12.3 to 4.2 (west wall to the Delmonico wall), y 3 to 22 (behind the bar to the kitchen end, clear of the corridor).
@@ -472,6 +491,12 @@ export class RoomLighting {
       const m2 = new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(243 / 255, 239 / 255, 231 / 255, THREE.SRGBColorSpace), toneMapped: false, fog: false, side: THREE.FrontSide });
       m2.name = 'milosint_ceil_fill2 [const]';
       const fm2 = new THREE.Mesh(g2, m2); fm2.name = 'milosint_ceil_fill2'; fm2.userData.invName = 'milosint_ceil_fill2'; root.add(fm2); fm2.updateMatrixWorld(true); nFill = 2; }
+    // main Oct 23 (south aisle: black slivers where floor pieces fail to meet): one backing plane 2 cm under every floor of the
+    // row, in the corridor tile's own colour, so a gap shows floor, not the void. Hidden everywhere the real floor is.
+    if (!(globalThis.RR_FLAGS || {}).nofloorback && !root.getObjectByName('rr_floor_back')) {
+      const gb = new THREE.PlaneGeometry(130, 110); gb.rotateX(-Math.PI / 2); gb.translate(-2, -0.02, 22);
+      const mb = new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(226 / 255, 212 / 255, 190 / 255, THREE.SRGBColorSpace), toneMapped: false, fog: false });
+      mb.name = 'rr_floor_back [const]'; const fb = new THREE.Mesh(gb, mb); fb.name = 'rr_floor_back'; fb.userData.invName = 'rr_floor_back'; root.add(fb); fb.updateMatrixWorld(true); }
     let nMove = 0, nLow = 0; { const byN = new Map(), bx = new THREE.Box3(), low = []; root.updateMatrixWorld(true);
       root.traverse(o => { if (!o.isMesh) return; const nm = o.userData.invName || o.name; if (!byN.has(nm)) byN.set(nm, o);
         const mv = ROOM_MOVE[nm]; if (mv) { o.position.x += mv[0]; o.position.y += mv[2]; o.position.z -= mv[1]; o.updateMatrixWorld(true); nMove++; }
@@ -515,8 +540,9 @@ export class RoomLighting {
           im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); root.add(im); nChand += SPEC.length; } } }
     const gjRep = (globalThis.RR_FLAGS || {}).nogjfix ? null : gjfixApply(root);   // gjfix (Oct 22), see gjfixApply
     const gj2Rep = (globalThis.RR_FLAGS || {}).nogjfix2 ? null : gjfix2Apply(root, this);   // gjfix2 (Oct 22 r2), see gjfix2Apply
+    let gj3Rep = null; try { gj3Rep = gjfix3Apply(root, this); } catch (e) { console.warn('gjfix3', e); }   // hero builder 2 (Oct 22 evening), see rr2_gjfix3.js
     for (const v of this.id) if (v) cells++;
-    return { milFill: nFill, hidden: nHide, hidden2: nHide2, hiddenCote: nHideC, chandx: nChand, gjfix: gjRep, gjfix2: gj2Rep, moved: nMove, lowTableware: nLow, clipY: ROOM_OBJCAL_RE.filter(([, e]) => e.clipTop).map(([, e]) => e.clipY ?? null), materials: n, rooms: this.names.length, cells, grid: [this.W, this.H], objMeshes: nObj, objCal: this.objCalHits, ...(clip ? { roomclip: clip } : {}) };
+    return { milFill: nFill, hidden: nHide, hidden2: nHide2, hiddenCote: nHideC, chandx: nChand, gjfix: gjRep, gjfix2: gj2Rep, gjfix3: gj3Rep, moved: nMove, lowTableware: nLow, clipY: ROOM_OBJCAL_RE.filter(([, e]) => e.clipTop).map(([, e]) => e.clipY ?? null), materials: n, rooms: this.names.length, cells, grid: [this.W, this.H], objMeshes: nObj, objCal: this.objCalHits, ...(clip ? { roomclip: clip } : {}) };
   }
   patch(material) {
     if (material.userData.roomLit) return; material.userData.roomLit = true;

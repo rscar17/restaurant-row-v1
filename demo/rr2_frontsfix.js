@@ -36,10 +36,12 @@ const MATS = {
   // Delmonico side panels, headers, pilaster casings: dark walnut burl (IMG_5420), was a saturated orange marble (metallic 0.3
   // tinted the reflections orange; the ramp read too light under the bake)
   rr_del_plaster: (m) => { const r = node(m, 'Color Ramp'), p = node(m, 'Principled BSDF'); if (!r || !p) return 'graph changed, skipped';
-    r.ramp.stops = [[0.36, [0.016, 0.0075, 0.0035, 1]], [0.58, [0.042, 0.020, 0.009, 1]], [0.8, [0.095, 0.050, 0.022, 1]]];
-    p.in.Metallic = 0; p.in.Roughness = 0.3; p.in['Coat Weight'] = 0.8; p.in['Coat Roughness'] = 0.05; return 'walnut burl ramp, metallic 0'; },
+    // main Oct 23: IMG_5420 shows smooth burnished bronze Venetian plaster, not burl: a narrow warm ramp, fine noise, soft sheen
+    r.ramp.stops = [[0.3, [0.13, 0.068, 0.03, 1]], [0.7, [0.17, 0.092, 0.042, 1]]];
+    for (const n of m.graph.nodes) if (n.type === 'TEX_NOISE') { n.in.Scale = 3; n.in.Detail = 2; n.in.Distortion = 0; }
+    p.in.Metallic = 0.15; p.in.Roughness = 0.32; p.in['Coat Weight'] = 0.5; p.in['Coat Roughness'] = 0.08; return 'bronze plaster, smooth'; },
   // Delmonico double doors: real walnut grain, vertical, box projected (was a flat orange procedural)
-  rr_del_door_oak: () => boxImage('american_walnut_veneer_diff_2k.jpg', [0.9, 0.9, 0.9], [0.78, 0.62, 0.5, 1], { Roughness: 0.38, 'Coat Weight': 0.45, 'Coat Roughness': 0.1 }),
+  rr_del_door_oak: () => boxImage('american_walnut_veneer_diff_2k.jpg', [0.9, 0.9, 0.9], [0.62, 0.4, 0.24, 1], /* main Oct 23: rich mid brown walnut like IMG_5420 (0.78 0.62 0.5 washed it grey beige) */ { Roughness: 0.38, 'Coat Weight': 0.45, 'Coat Roughness': 0.1 }),
   // Delmonico entrance canopy underside: the perforated lattice was a HASHED transparent mix (single sided, so it vanished
   // from below and the lit oval read as a plain light disc); now opaque dark bronze with black perforations
   rr_del_lattice: (m) => { const g = m?.graph; if (!g || !node(m, 'Math.007')) return 'graph changed, skipped';

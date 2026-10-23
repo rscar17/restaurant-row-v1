@@ -359,6 +359,11 @@ vec3 rrRibN( const in vec3 ng, const in float s ) { return normalize( mix( ng, n
   // (int_mb_glass, the generic unit glass of the build's fills) read milky with blurred interiors; Ryan's photos show clear
   // glass. Those panes pass RR_FLAGS.clearglassT (default 0.9) with no diffuse share. Hero glass keeps its own fits.
   if (+(F.clearglass ?? 1) && !glassEmit && new RegExp(F.clearglassre || '^int_mb_glass(\.\d+)?$').test(material.name || '')) { glassT.value = Math.max(glassT.value, +(F.clearglassT ?? 0.97)); glassD.value = 0; }
+  // main Oct 23 (Ryan: "looks like there's no glass, you can look right in"): clear panes passed up to 0.97 with F0 0.04, so
+  // head on they drew at alpha 0.07. Ryan's photos show the panes plainly: tint plus the corridor lights reflected. Every
+  // clear pane passes at most RR_FLAGS.glassTmax (0.82) and reflects at least RR_FLAGS.glassF0min (0.06). Uniform values only.
+  // watcher 08:14: storefront panes only (not bottles, wine glasses, vases or the rotunda copy)
+  if (!glassEmit && frost < 0.25 && !material.userData.glassfixOn && !/bottle|wine|vase|tumbler|cup|crystal|decanter|flute|carafe/i.test(material.name || '')) { glassT.value = Math.min(glassT.value, +(F.glassTmax ?? 0.6)); glassF0.value = Math.max(glassF0.value, +(F.glassF0min ?? 0.09)); }   // Ryan 08:1x: let the glass do its job, the rooms read too bright from the hall
   material.userData.glassT = glassT.value; material.userData.glassDiffuse = glassD.value; material.userData.frost = frost;
   // black glass (a metallic share and almost nothing let through: the base panels behind Matteo's lower reeded band,
   // Material_398, and the black cladding Material_30 to _40 / _86) is drawn at the end of the opaque pass instead of with

@@ -22,7 +22,11 @@ export async function loadLightmaps(url) {
   const want = String(F().lmareas ?? 'all').split(',').map(s => s.trim()).filter(Boolean), all = want.includes('all');
   const byName = new Map(), areas = {};
   const list = Object.entries(j.areas || {}).filter(([area]) => all || want.includes(area));
-  const texs = await Promise.all(list.map(([, a]) => bml ? bml.loadAsync(base + a.atlas).then(b => new THREE.Texture(b)) : loader.loadAsync(base + a.atlas)));   // parallel downloads
+  // main Oct 23 (speed: lightmaps were 96 MB of the 207 MB first view): RR_FLAGS.lmsmall (default on) loads the quarter size
+  // atlases from ../lm_s/ first (11.6 MB) and swaps in the full ones in the background a few seconds after (same light, sharper)
+  const small = bml && +(F().lmsmall ?? 1), sbase = base.replace(/lm\/$/, 'lm_s/');
+  const texs = await Promise.all(list.map(([, a]) => bml ? bml.loadAsync((small ? sbase : base) + a.atlas).catch(() => bml.loadAsync(base + a.atlas)).then(b => new THREE.Texture(b)) : loader.loadAsync(base + a.atlas)));   // parallel downloads
+  if (small) setTimeout(async () => { for (const [k, [, a]] of list.entries()) { try { const b = await bml.loadAsync(base + a.atlas); const t = texs[k]; t.dispose(); t.image = b; t.needsUpdate = true; } catch (e) { /* keep the small atlas */ } } }, +(F().lmsmalldelay ?? 3000));
   for (const [k, [area, a]] of list.entries()) {
     const t = texs[k];
     t.channel = 1; t.flipY = false; t.colorSpace = THREE.NoColorSpace; t.premultiplyAlpha = false; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;

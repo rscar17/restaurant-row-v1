@@ -97,7 +97,7 @@ function setup(root) {
   const cfg = { ...root.dataset, ...(window.RR_SECTION || {}) };
   const opt = (k, d) => cfg['rr' + k[0].toUpperCase() + k.slice(1)] ?? cfg[k] ?? d;
   const DATA = new URL(opt('data', 'data/'), BASE).href;
-  const areaOpt = opt('areas', null), policyMode = opt('policy', 'tier'), phoneMode = opt('phone', 'map');
+  const areaOpt = opt('areas', null), policyMode = opt('policy', 'tier'), phoneMode = opt('phone', 'try');   // main Oct 23 (Ryan: has to work on mobile): phones get the light 3D (SHIP_PHONE_TRY), map only on request
   const toUrls = (list) => list.split(',').map(a => a.split('|')[0].includes('/') ? a : DATA + a);
   let AREAS = toUrls(areaOpt || SHIP_AREAS);
   const CAPS = opt('caps', DATA + 'caps');

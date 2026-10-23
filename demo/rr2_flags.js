@@ -72,7 +72,8 @@ export const SHIP_FLAGS = {
   // Oct 16: smalltex was off 03:45 to 06:2x (the first swap left some textures small); the eng_v2 swap gives every swapped picture a fresh
   // Source. zstdata = area files as .zst (three ZSTDDecoder), about 11 % smaller than .gz; .gz and plain stay as fallback.
   // Oct 16 09:06: smalltex OFF for the final package (unproven: after the eng_v2 swap, walk fell to 1 to 4 fps in c19_b, prof_base)
-  smalltex: 0, gzdata: 1, zstdata: 1
+  // main Oct 22 night: smalltex ON (Intel cold, 1920x1080: ready 114 s -> 47 s, full textures swapped by 218 s, peak RAM 78 %)
+  smalltex: 1, gzdata: 1, zstdata: 1
 };
 
 // Flags that other agents are verifying on r8f data today (Oct 15). PLACEHOLDERS: each stays off for visitors until its
