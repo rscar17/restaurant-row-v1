@@ -111,7 +111,7 @@ if (V && S && V.stage) {
   const dock = document.createElement('div'); dock.className = 'dock'; dock.setAttribute('role', 'toolbar'); dock.setAttribute('aria-label', 'Restaurant Row view');
   const btn = (k, label, tip) => `<button type="button" class="btn" data-k="${k}"${tip ? ` aria-label="${tip}"` : ''}>${label}</button>`;
   dock.innerHTML = '<div class="group where">' + btn('3d', 'Overview') + CARDS.map(c => btn(c.id, c.id === 'milos' ? 'Milos' : c.id === 'delmonico' ? 'Delmonico' : 'Gjelina')).join('') + '</div><i class="sep"></i>'
-    + '<div class="group how">' + btn('walk', 'Walkthrough') + btn('free', 'Free walk') + '</div><i class="sep"></i>'
+    + '<div class="group how">' + btn('walk', 'Walkthrough') + btn('free', 'Free walk') + btn('map', 'Resort map') + '</div><i class="sep"></i>'   // Ryan Oct 23: the page tab strip is hidden, so the dock carries the resort map too (S.select('map'), as the strip's flat tab did)
     + '<div class="group tools">' + btn('top', I.top + '<span>Top view</span>', 'Top view') + btn('in', I.zin + '<span>Zoom in</span>', 'Zoom in') + btn('out', I.zout + '<span>Zoom out</span>', 'Zoom out')
     + btn('cut', I.cut + '<span>Cut-away</span>', 'Cut-away') + btn('set', I.gear + '<span>Settings</span>', 'Settings') + btn('full', I.full + '<span>Fullscreen</span>', 'Fullscreen') + btn('snap', I.snap + '<span>Snapshot</span>', 'Snapshot') + '</div>';
   ui.append(dock);
