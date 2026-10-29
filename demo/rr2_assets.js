@@ -151,6 +151,54 @@ export async function upgradeSmallTextures(renderer, { perFrame = 1, order = nul
   await Promise.all(Array.from({ length: concurrency }, worker)); clearInterval(tick);
   smallStats.doneAt = performance.now(); smallStats.maxSwapMs = Math.round(smallStats.maxSwapMs); return smallStats;
 }
+// RR_FLAGS.texstream (main, Oct 29): the full size picture only for what is near the camera. On an integrated GPU the
+// textures live in system RAM, and every Source at full size at once (about 780 pictures, up to 4096) ran the Intel laptop
+// out of memory after the open (cand_live run, RAM 59 to 93 percent). Every streamNear seconds: each Source's distance is
+// the nearest of its meshes (bounding sphere, camera to surface); the nearest Sources within texNear m get the full picture
+// (at most texMax2 at once), a full Source further than texNear + texHys m goes back to its small copy. What the visitor
+// walks up to is always full size; only pictures far behind are held small.
+export async function streamTextures(renderer, scene, camera, { invalidate = () => {}, idle = null } = {}) {
+  const F = globalThis.RR_FLAGS || {}, NEAR = +(F.texNear ?? 18), HYS = +(F.texHys ?? 8), CAP = +(F.texMax2 ?? 64), EVERY = +(F.streamEvery ?? 0.5) * 1000;
+  const M = texMax(), list = SMALLREG.slice(); smallStats.entries = list.length; smallStats.startedAt = performance.now(); smallStats.stream = { near: NEAR, cap: CAP, up: 0, down: 0, full: 0 };
+  // texture -> meshes, from the standard slots and from shader uniforms (Blender graph materials)
+  const meshesOf = new Map(), add = (t, o) => { if (t && t.isTexture) { let a = meshesOf.get(t); if (!a) meshesOf.set(t, a = []); a.push(o); } };
+  scene.traverse(o => { if (!o.isMesh || !o.material) return; for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+    for (const k in m) { const v = m[k]; if (v && v.isTexture) add(v, o); }
+    if (m.uniforms) for (const u of Object.values(m.uniforms)) { const v = u && u.value; if (Array.isArray(v)) v.forEach(x => add(x, o)); else add(v, o); } } });
+  const sph = new THREE.Sphere(), cam = new THREE.Vector3();
+  for (const e of list) { e.objs = new Set(); for (const t of e.allUsers) for (const o of meshesOf.get(t) || []) e.objs.add(o); e.full = false; }
+  const dist = (e) => { let d = Infinity; for (const o of e.objs) { const g = o.geometry; if (!g) continue; if (!g.boundingSphere) g.computeBoundingSphere();
+    sph.copy(g.boundingSphere).applyMatrix4(o.matrixWorld); d = Math.min(d, Math.max(0, sph.center.distanceTo(cam) - sph.radius)); } return d; };
+  const frame = () => new Promise(r => requestAnimationFrame(() => r()));
+  const swap = async (e, bmp, full) => {
+    while (idle && !idle()) await frame();
+    const ns = new THREE.Source(bmp); ns.userData = { smallFull: e.small.url, full }; let up = 0;
+    for (const t of e.allUsers) { const used = !!renderer.properties.get(t).__webglInit, live = used || e.users.has(t) || (e.late && e.late.has(t));
+      if (used) t.dispose(); t.source = ns; t.needsUpdate = true; if (live) { renderer.initTexture(t); up++; } }
+    if (e.src.data && e.src.data !== bmp && e.src.data.close) e.src.data.close(); e.src.data = null; e.src = ns;
+    const pending = [...e.allUsers].filter(t => !renderer.properties.get(t).__webglInit && (e.users.has(t) || (e.late && e.late.has(t))));
+    if (!pending.length) { bmp.close(); ns.data = null; }
+    e.full = full; smallStats.uploads += up; invalidate();
+  };
+  const load = async (e, full) => { const url = full ? e.small.url : e.small.url.replace('/img/', '/img_s/');
+    const blob = await queuedFetch(url, { priority: full ? PRI.near : PRI.far, as: 'blob' }); if (full) smallStats.bytes += blob.size;
+    return decodeCapped(blob, e.small.flipY, full ? M : 0); };
+  const live = (e) => [...e.allUsers].some(t => renderer.properties.get(t).__webglInit || e.users.has(t) || (e.late && e.late.has(t)));
+  let busy = false;
+  const step = async () => { if (busy) return; busy = true;
+    try { camera.getWorldPosition(cam);
+      const d = new Map(list.map(e => [e, dist(e)]));
+      const want = list.filter(e => d.get(e) < NEAR && live(e)).sort((a, b) => d.get(a) - d.get(b)).slice(0, CAP), keep = new Set(want);
+      // drop first (frees memory before the next uploads): full Sources that left the near set and are past the hysteresis band, furthest first
+      const drop = list.filter(e => e.full && !keep.has(e) && (d.get(e) > NEAR + HYS || list.filter(x => x.full).length >= CAP)).sort((a, b) => d.get(b) - d.get(a));
+      for (const e of drop.slice(0, 4)) { try { await swap(e, await load(e, false), false); smallStats.stream.down++; } catch (err) { smallStats.failed++; } }
+      for (const e of want.filter(e => !e.full).slice(0, 4)) { try { await swap(e, await load(e, true), true); smallStats.stream.up++; smallStats.swapped++; } catch (err) { smallStats.failed++; } }
+      smallStats.stream.full = list.filter(e => e.full).length;
+    } finally { busy = false; } };
+  await step(); smallStats.doneAt = performance.now();
+  const timer = setInterval(step, EVERY); streamTextures.stop = () => clearInterval(timer);
+  return smallStats;
+}
 // early: memlean bit 4 (memleanAreaDone), close before the global seal once every Texture known so far has uploaded
 function maybeClose(e, early = false) { if ((!sealed && !early) || e.closed || !e.src.data) return; for (const t of e.users) if (!e.uploaded.has(t)) return; closeEntry(e); }
 // RR_FLAGS.memlean bit 4 (memlean=7): the player uploads each area's textures as soon as that area is done (rr2_player.js

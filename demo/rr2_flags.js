@@ -73,7 +73,10 @@ export const SHIP_FLAGS = {
   // Source. zstdata = area files as .zst (three ZSTDDecoder), about 11 % smaller than .gz; .gz and plain stay as fallback.
   // Oct 16 09:06: smalltex OFF for the final package (unproven: after the eng_v2 swap, walk fell to 1 to 4 fps in c19_b, prof_base)
   // main Oct 22 night: smalltex ON (Intel cold, 1920x1080: ready 114 s -> 47 s, full textures swapped by 218 s, peak RAM 78 %)
-  smalltex: 1, gzdata: 1, zstdata: 1
+  smalltex: 1, gzdata: 1, zstdata: 1, texstream: 1,
+  // main, Oct 29 speed: floor mirror every other frame while moving (full when settled), mirror skips objects past 15 m,
+  // main pass skips objects under 3 px (was 0.75)
+  mirrorhalf: 1, mirrorfar: 15, mainMinPx: 3, occl: 1
 };
 
 // Flags that other agents are verifying on r8f data today (Oct 15). PLACEHOLDERS: each stays off for visitors until its

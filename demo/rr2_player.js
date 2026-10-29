@@ -15,6 +15,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RefBloomPass } from './rr2_refbloom.js';
 import { computeBoundsTree, acceleratedRaycast, MeshBVH } from 'three-mesh-bvh';
+import { LineOfSight } from './rr2_occl.js';
 import { compileAndApply, loadArea, fixObjectCoords } from './rr2_scene.js';
 import { signfixImages, signfixArea, signfixLight } from './rr2_signfix.js';
 import { frontsfixExtra, frontsfixArea } from './rr2_frontsfix.js';
@@ -29,7 +30,7 @@ import { CoveLights, addCrackBacking } from './rr2_cove.js';
 import { bakeSugarcane } from './rr2_sugbake.js';
 import { floatFix2 } from './rr2_floatfix2.js';
 import { RoomLighting } from './rr2_rooms.js';
-import { CaptureCache, queuedFetch, PRI, stats as assetStats, netQueue, memleanSeal, memleanAudit, memleanGLTFPlugin, memleanMark, memleanAreaDone, upgradeSmallTextures, smallStats } from './rr2_assets.js';
+import { CaptureCache, queuedFetch, PRI, stats as assetStats, netQueue, memleanSeal, memleanAudit, memleanGLTFPlugin, memleanMark, memleanAreaDone, upgradeSmallTextures, streamTextures, smallStats } from './rr2_assets.js';
 import { pickTier, DprGovernor } from './rr2_tier.js';
 import { ProgramGate } from './rr2_gate.js';
 import { lmOn, loadLightmaps, applyLightmaps } from './rr2_lightmap.js';
@@ -844,7 +845,9 @@ export class RowPlayer {
     // main 03:4x (ship found it): lightmaps go on BEFORE mergeStatic, which folds meshes into nameless 'merged:<material>' meshes;
     // baked copies are cached per source material and atlas, so the merge key keeps baked with baked of the same atlas
     if (lmOn()) { try { this.lmData ||= await (this.lmPromise || loadLightmaps((globalThis.RR_FLAGS || {}).lmurl || 'data/lm/lm.json')); this.report.lightmap = applyLightmaps(this.root, this.lmData); mark('lightmaps applied'); } catch (e) { (this.report.errors ||= []).push('lightmap: ' + e.message); } }
-    this.mergeStatic();
+    // RR_FLAGS.mergeCell (main, Oct 29): merge cell in metres; the Intel laptop is draw call bound (about 1800 calls, the pass
+    // barely changes at half resolution), so larger cells mean fewer calls for the same pixels
+    this.mergeStatic(+((globalThis.RR_FLAGS || {}).mergeCell ?? 8));
     mark('pass mergeStatic');
     // black glass (rr2_reflect.js thinGlass, glassLate) is drawn at the end of the opaque pass, after everything opaque it
     // covers, still blended as a pane: three's transmission target then holds it, so the reeded panes in front of it read
@@ -1434,7 +1437,7 @@ export class RowPlayer {
     this.cullList = []; const sph = new THREE.Sphere();
     this.root.updateMatrixWorld(true);
     this.root.traverse(o => { if (!o.isMesh || o.isInstancedMesh) return; if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
-      sph.copy(o.geometry.boundingSphere).applyMatrix4(o.matrixWorld); this.cullList.push({ o, c: sph.center.clone(), r: Math.max(sph.radius, 1e-3) }); });
+      sph.copy(o.geometry.boundingSphere).applyMatrix4(o.matrixWorld); const g = o.geometry; this.cullList.push({ o, c: sph.center.clone(), r: Math.max(sph.radius, 1e-3), tris: (g.index ? g.index.count : g.attributes.position.count) / 3 }); });
   }
   cull(minPx, maxSmallDist = Infinity, maxDist = Infinity) {
     // RR_FLAGS.smallfar = metres (ship fps test, off by default): in the main pass, objects under 0.25 m radius farther than this are skipped
@@ -1443,7 +1446,10 @@ export class RowPlayer {
     const k = (this.renderer.domElement.height / 2) / Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
     const ready = this.readyMats;
     const pvs = this.pvsActive;
-    for (const e of this.cullList) { const d = Math.max(0.1, e.c.distanceTo(cam) - e.r); e.o.visible = !e.o.userData.rrHide && (!pvs || pvs.has(e.o.userData.vid) || e.o.material.transparent) && (e.r / d) * k >= minPx && (e.r > this._smallR || d < maxSmallDist) && d < maxDist && (!ready || ready.has(e.o.material)); }
+    // RR_FLAGS.heavyTris / heavyFar (main, Oct 29): dense props (poppy walls, merged leather chairs, neon tubes: 150k to 1.3M
+    // triangles each) are skipped beyond heavyFar m; at that distance they cover a few dozen pixels and cost most of the frame
+    const F = globalThis.RR_FLAGS || {}, heavyT = +(F.heavyTris ?? 60000), heavyD = +(F.heavyFar ?? 22), los = this.los;
+    for (const e of this.cullList) { const d = Math.max(0.1, e.c.distanceTo(cam) - e.r); e.o.visible = !e.o.userData.rrHide && (!pvs || pvs.has(e.o.userData.vid) || e.o.material.transparent) && (e.r / d) * k >= minPx && (e.r > this._smallR || d < maxSmallDist) && d < maxDist && (e.tris < heavyT || e.r > 6 || d < heavyD) && (!los || los.visible(e)) && (!ready || ready.has(e.o.material)); }
   }
   setPVS(zones) { this.pvsZones = zones.map(z => ({ c: z.c, r: z.r, ids: new Set(z.ids) })); this.pvsKey = null; }
   updatePVS() {
@@ -1466,9 +1472,9 @@ export class RowPlayer {
     if (this.cove) this.cove.update(cam.position, true);
     this.cull(0.75);
   }
-  render() { this.camera.updateMatrixWorld(); this.updatePVS();
+  render() { this.camera.updateMatrixWorld(); this.updatePVS(); if (this.los) this.los.update(this.camera);
     // RR_FLAGS.mirrorfar (ship speed, side copy, default off): the floor mirror pass skips objects farther than this many metres
-    if (this.floor) { this.cull(2.5, 12, +((globalThis.RR_FLAGS || {}).mirrorfar || 0) || Infinity); } if (this.lamps) this.lamps.update(this.camera.position); if (this.cove) this.cove.update(this.camera.position); if (this.floor && this.mirrorReady !== false && (!+((globalThis.RR_FLAGS || {}).mirrorhalf || 0) || ((this._mf = (this._mf || 0) + 1) % 2) === 1 || this._settled)) this.floor.update(this.renderer, this.scene, this.camera); this.cull(0.75);
+    if (this.floor) { this.cull(2.5, 12, +((globalThis.RR_FLAGS || {}).mirrorfar || 0) || Infinity); } if (this.lamps) this.lamps.update(this.camera.position); if (this.cove) this.cove.update(this.camera.position); if (this.floor && this.mirrorReady !== false && (!+((globalThis.RR_FLAGS || {}).mirrorhalf || 0) || ((this._mf = (this._mf || 0) + 1) % 2) === 1 || this._settled)) this.floor.update(this.renderer, this.scene, this.camera); this.cull(+((globalThis.RR_FLAGS || {}).mainMinPx ?? 3));
     if (this.composer && this.postReady === false) this.cheapRender(); else this.composer ? this.composer.render() : this.renderer.render(this.scene, this.camera); }
   // gate agent: until the post chain programs report linked, draw the scene into the composer's first target (the
   // target every real program was compiled for, so no draw time compile) and copy it to the screen with one tiny
@@ -1521,7 +1527,9 @@ export class RowPlayer {
       this.report.gate = { issued: st.issued, swaps: st.swaps, parked: st.parked, reused: st.reused, newPrograms: st.newPrograms, maxFrameMs: Math.round(st.maxFrameMs), maxTickMs: +st.maxTickMs.toFixed(1), checks: st.checks, linkReads: st.linkReads, frames: st.frames, khr: st.khr,
         uniMs: Math.round(st.uniMs), texMs: Math.round(st.texMs), texCount: st.texCount, opts: { gateMs: gate.gateMs, maxInFlight: gate.maxInFlight, perFrame: gate.perFrame, dedupe: !!keyOf, uni: gate.preUniforms, tex: gate.preTextures } };
       this.report.gateFrames = st.topFrames; this.report.gatePrograms = st.programs;
-      this.lowresActive = false; if (this.dprGov) this.dprGov.resume(pr0); else this.setDpr(pr0); this.report.lowres.restored = r.getPixelRatio(); mark('full resolution'); this.invalidate(4); this.emit('ready', this.report.gate); });
+      this.lowresActive = false; if (this.dprGov) this.dprGov.resume(pr0); else this.setDpr(pr0); this.report.lowres.restored = r.getPixelRatio(); mark('full resolution'); this.invalidate(4); this.emit('ready', this.report.gate);
+      // RR_FLAGS.occl (main, Oct 29): line of sight culling, built once after the open, off the first frames
+      if (+((globalThis.RR_FLAGS || {}).occl || 0) && this.cullList && !this.los) setTimeout(() => { try { this.los = new LineOfSight(this.cullList); this.report.occl = this.los.stats; this.invalidate(2); } catch (e) { this.report.occlErr = String(e); } }, 1500); });
     return gate; }
   // map first loading (gate agent): load in the background on a canvas that is laid out but not shown (visibility
   // hidden, not display none, so it keeps a size). Starts at idle priority, compiles only through the gate, draws
@@ -1536,7 +1544,8 @@ export class RowPlayer {
       if (!this.gate) this.emit('ready', null); await this.compiling; return this.report; })(); }
   // RR_FLAGS.smalltex (ship speed, side copy): swap the full size textures in behind the open view (rr2_assets.js)
   upgradeTextures(opts = {}) { if (this.upgrading) return this.upgrading; this.report.smallTex = smallStats;
-    return this.upgrading = upgradeSmallTextures(this.renderer, { invalidate: () => this.invalidate(2), idle: () => performance.now() - (this._moveAt || 0) > 400, ...opts }).then(s => { this.emit('fulltex', s); return s; }); }
+    const o = { invalidate: () => this.invalidate(2), idle: () => performance.now() - (this._moveAt || 0) > 400, ...opts };
+    return this.upgrading = (+((globalThis.RR_FLAGS || {}).texstream || 0) ? streamTextures(this.renderer, this.scene, this.camera, o) : upgradeSmallTextures(this.renderer, o)).then(s => { this.emit('fulltex', s); return s; }); }
   show() { this.hidden = false; this.resize(); this.invalidate(4); this.start(); }
   hide() { this.hidden = true; }
   // render loop. A frame whose camera and scene state match the last drawn one is skipped (a still view costs nothing on
