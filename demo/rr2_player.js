@@ -317,6 +317,8 @@ export class RowPlayer {
     // go through the shared decode of rr2_assets.js instead of GLTFLoader's own ImageBitmapLoader, which held a second
     // full decode of each one for the life of the page
     const MLc = +((globalThis.RR_FLAGS || {}).memlean || 0);
+    // main, Oct 29: meshopt decoding off the main thread (it was most of the 6 s geometry step of the main export)
+    if (MeshoptDecoder.useWorkers && !+((globalThis.RR_FLAGS || {}).meshoptMain || 0)) MeshoptDecoder.useWorkers(Math.max(1, Math.min(4, ((globalThis.navigator && navigator.hardwareConcurrency) || 4) - 1)));
     this.loader = new GLTFLoader().setKTX2Loader(this.ktx2).setMeshoptDecoder(MeshoptDecoder); if (MLc & 1) this.loader.register(memleanGLTFPlugin);
     this.report = { errors: [], config: this.report?.config }; this.mode = 'stop';
     this.yaw = 0; this.pitch = 0; this.keys = new Set(); this.move = new THREE.Vector2(); this.vel = new THREE.Vector3();
@@ -346,7 +348,7 @@ export class RowPlayer {
     if (!(globalThis.RR_FLAGS || {}).lightunroll) this.report.lightLoops = rollLightLoops();
     if ((globalThis.RR_FLAGS || {}).lightloop) this.report.lightLoopsDyn = dynamicLightLoops(); // rr2_lightloop.js
     this.report.shField = await loadSHField(capsUrl + '/sh.json');
-    let i = 0; const tl = this.report.timeline = []; const t0 = performance.now(); const mark = (m) => tl.push([+((performance.now() - t0) / 1000).toFixed(2), m]);
+    let i = 0; const tl = this.report.timeline = []; const t0 = performance.now(); this.report.loadT0 = Math.round(t0); const mark = (m) => tl.push([+((performance.now() - t0) / 1000).toFixed(2), m]);
     if (lmOn() && !this.lmData && !this.lmPromise) { this.lmPromise = loadLightmaps((globalThis.RR_FLAGS || {}).lmurl || 'data/lm/lm.json'); this.lmPromise.catch(() => {}); }   // main 04:3x: atlases download alongside the GLBs
     // every section's files are requested up front through one priority queue (the start section first, outer
     // sections after); materials and lighting are then applied section by section in order while later downloads run

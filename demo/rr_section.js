@@ -221,16 +221,16 @@ function setup(root) {
   async function startLoad() {
     if (st.started) return; st.started = true; st.phase = 'starting';
     try {
-      st.policy = devicePolicy();
+      st.policy = devicePolicy(); const pt = st.preT = { start: Math.round(performance.now()) };
       if (st.policy.map) return mapOnly();
-      await loadViewer();
+      await loadViewer(); pt.viewer = Math.round(performance.now());
       let Cls = RowPlayer;
       const pm = opt('playerModule', null);
       if (pm) { const m = await import(new URL(pm, location.href).href); Cls = m.makePlayer({ THREE, RowPlayer, assets }); }
       // profile: on a page the keys belong to the viewer only while its canvas has focus, and the wheel scrolls the page
       const P = st.P = new Cls(canvas, { basis: BASE + 'vendor/three/examples/jsm/libs/basis/', onProgress: () => {}, ...SHIP_PLAYER, profile: { name: 'swoogo-section', keysNeedFocus: true, wheelModifier: true } });
       // the modes controller hooks into the load (unit tags before merging, collision near the corridor), so it is made first
-      const M = st.M = new RowModes(P, { host: panel3d });
+      const M = st.M = new RowModes(P, { host: panel3d }); pt.ctor = Math.round(performance.now());
       // agent look (Oct 19): RR_FLAGS.look installs the clip planes and the program deferral before the load (rr2_look.js)
       if (+(F.look ?? 0)) { st.LK = installLook(P, M, { ungrade: (h) => ungrade(h, P.exposureEV ?? 0.08), flags: F }); LOOK.bg = '#f4f7f9'; }
       st.tier = P.tier ? { name: P.tier.name, why: P.tier.why } : null;
