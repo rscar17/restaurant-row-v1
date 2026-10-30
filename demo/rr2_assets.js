@@ -158,7 +158,9 @@ export async function upgradeSmallTextures(renderer, { perFrame = 1, order = nul
 // (at most texMax2 at once), a full Source further than texNear + texHys m goes back to its small copy. What the visitor
 // walks up to is always full size; only pictures far behind are held small.
 export async function streamTextures(renderer, scene, camera, { invalidate = () => {}, idle = null } = {}) {
-  const F = globalThis.RR_FLAGS || {}, NEAR = +(F.texNear ?? 18), HYS = +(F.texHys ?? 8), CAP = +(F.texMax2 ?? 64), EVERY = +(F.streamEvery ?? 0.5) * 1000;
+  // cap by device memory (Chrome reports 0.25 to 8 GB): 64 full pictures plus the rest of the scene took the laptop to 93 % RAM
+  const dm = (globalThis.navigator && navigator.deviceMemory) || 8;
+  const F = globalThis.RR_FLAGS || {}, NEAR = +(F.texNear ?? 15), HYS = +(F.texHys ?? 8), CAP = +(F.texMax2 ?? (dm >= 8 ? 32 : dm >= 4 ? 16 : 8)), EVERY = +(F.streamEvery ?? 0.5) * 1000;
   const M = texMax(), list = SMALLREG.slice(); smallStats.entries = list.length; smallStats.startedAt = performance.now(); smallStats.stream = { near: NEAR, cap: CAP, up: 0, down: 0, full: 0 };
   // texture -> meshes, from the standard slots and from shader uniforms (Blender graph materials)
   const meshesOf = new Map(), add = (t, o) => { if (t && t.isTexture) { let a = meshesOf.get(t); if (!a) meshesOf.set(t, a = []); a.push(o); } };

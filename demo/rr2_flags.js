@@ -76,7 +76,7 @@ export const SHIP_FLAGS = {
   smalltex: 1, gzdata: 1, zstdata: 1, texstream: 1,
   // main, Oct 29 speed: floor mirror every other frame while moving (full when settled), mirror skips objects past 15 m,
   // main pass skips objects under 3 px (was 0.75)
-  mirrorhalf: 1, mirrorfar: 15, mainMinPx: 3, occl: 1
+  mirrorhalf: 1, mirrorEvery: 3, mirrorfar: 15, mainMinPx: 3, occl: 1, proplod: 1
 };
 
 // Flags that other agents are verifying on r8f data today (Oct 15). PLACEHOLDERS: each stays off for visitors until its

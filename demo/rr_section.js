@@ -159,6 +159,13 @@ function setup(root) {
       if (card) { card.hidden = false; card.textContent = (HEROES.includes(t) ? NAMES[t] + ' is highlighted on the map. ' : '') + 'The ' + (NAMES[t] || '3D') + ' view opens here as soon as the 3D has loaded.'; }
       setPressed(t); return;
     }
+    // main, Oct 29: the walk modes wait for the last programs (open on first view leaves them compiling behind the overview);
+    // a walk started earlier froze for up to 4.5 s on each new material. The choice is kept and opens the moment they are linked.
+    if ((t === 'walk' || t === 'free') && st.P && st.P.compiling && !st.compiled) {
+      st.waitWalk = t; setPressed(t); if (card) { card.hidden = false; card.textContent = 'Getting the ' + (t === 'free' ? 'free walk' : 'walkthrough') + ' ready, a few more seconds.'; }
+      if (!st.waitHooked) { st.waitHooked = true; const go = () => { if (st.compiled) return; st.compiled = true; const w = st.waitWalk; st.waitWalk = null; if (card) card.hidden = true; if (w) select(w); };
+        st.P.compiling.then(go, go); setTimeout(go, 20000); }   // never hold a walk longer than 20 s
+      return; }
     if (card) card.hidden = true;
     st.active = t; setPressed(t);
     if (t === 'map') { showPanel('map'); applyRun(); return; }
@@ -307,6 +314,7 @@ function setup(root) {
   }
   function becomeReady() {
     if (st.ready) return; st.ready = true; st.phase = 'ready'; st.readyAt = performance.now();
+    if (st.P && st.P.compiling) st.P.compiling.then(() => { st.compiled = true; }); else st.compiled = true;
     setPct(null); if (prog) prog.hidden = true; panel3d.setAttribute('data-rr-ready', '');
     tab3dLike.forEach(b => { b.removeAttribute('aria-disabled'); b.disabled = false; });
     const cap = root.querySelector('.rr-map-caption'); if (cap) cap.lastChild.textContent = 'The 3D view is ready: pick 3D or a restaurant above.';

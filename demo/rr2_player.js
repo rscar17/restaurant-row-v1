@@ -16,6 +16,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RefBloomPass } from './rr2_refbloom.js';
 import { computeBoundsTree, acceleratedRaycast, MeshBVH } from 'three-mesh-bvh';
 import { LineOfSight } from './rr2_occl.js';
+import { PropLOD } from './rr2_lod.js';
 import { compileAndApply, loadArea, fixObjectCoords } from './rr2_scene.js';
 import { signfixImages, signfixArea, signfixLight } from './rr2_signfix.js';
 import { frontsfixExtra, frontsfixArea } from './rr2_frontsfix.js';
@@ -1449,7 +1450,8 @@ export class RowPlayer {
     // RR_FLAGS.heavyTris / heavyFar (main, Oct 29): dense props (poppy walls, merged leather chairs, neon tubes: 150k to 1.3M
     // triangles each) are skipped beyond heavyFar m; at that distance they cover a few dozen pixels and cost most of the frame
     const F = globalThis.RR_FLAGS || {}, heavyT = +(F.heavyTris ?? 60000), heavyD = +(F.heavyFar ?? 22), los = this.los;
-    for (const e of this.cullList) { const d = Math.max(0.1, e.c.distanceTo(cam) - e.r); e.o.visible = !e.o.userData.rrHide && (!pvs || pvs.has(e.o.userData.vid) || e.o.material.transparent) && (e.r / d) * k >= minPx && (e.r > this._smallR || d < maxSmallDist) && d < maxDist && (e.tris < heavyT || e.r > 6 || d < heavyD) && (!los || los.visible(e)) && (!ready || ready.has(e.o.material)); }
+    const lodNear = +(F.lodNear ?? 5);
+    for (const e of this.cullList) { const d = Math.max(0.1, e.c.distanceTo(cam) - e.r); if (e.lodIndex) PropLOD.pick(e, d, lodNear); e.o.visible = !e.o.userData.rrHide && (!pvs || pvs.has(e.o.userData.vid) || e.o.material.transparent) && (e.r / d) * k >= minPx && (e.r > this._smallR || d < maxSmallDist) && d < maxDist && (e.tris < heavyT || e.r > 6 || d < heavyD) && (!los || los.visible(e)) && (!ready || ready.has(e.o.material)); }
   }
   setPVS(zones) { this.pvsZones = zones.map(z => ({ c: z.c, r: z.r, ids: new Set(z.ids) })); this.pvsKey = null; }
   updatePVS() {
@@ -1474,7 +1476,7 @@ export class RowPlayer {
   }
   render() { this.camera.updateMatrixWorld(); this.updatePVS(); if (this.los) this.los.update(this.camera);
     // RR_FLAGS.mirrorfar (ship speed, side copy, default off): the floor mirror pass skips objects farther than this many metres
-    if (this.floor) { this.cull(2.5, 12, +((globalThis.RR_FLAGS || {}).mirrorfar || 0) || Infinity); } if (this.lamps) this.lamps.update(this.camera.position); if (this.cove) this.cove.update(this.camera.position); if (this.floor && this.mirrorReady !== false && (!+((globalThis.RR_FLAGS || {}).mirrorhalf || 0) || ((this._mf = (this._mf || 0) + 1) % 2) === 1 || this._settled)) this.floor.update(this.renderer, this.scene, this.camera); this.cull(+((globalThis.RR_FLAGS || {}).mainMinPx ?? 3));
+    if (this.floor) { this.cull(2.5, 12, +((globalThis.RR_FLAGS || {}).mirrorfar || 0) || Infinity); } if (this.lamps) this.lamps.update(this.camera.position); if (this.cove) this.cove.update(this.camera.position); if (this.floor && this.mirrorReady !== false && (!+((globalThis.RR_FLAGS || {}).mirrorhalf || 0) || ((this._mf = (this._mf || 0) + 1) % Math.max(1, +((globalThis.RR_FLAGS || {}).mirrorEvery || 2))) === 0 || this._settled)) this.floor.update(this.renderer, this.scene, this.camera); this.cull(+((globalThis.RR_FLAGS || {}).mainMinPx ?? 3));
     if (this.composer && this.postReady === false) this.cheapRender(); else this.composer ? this.composer.render() : this.renderer.render(this.scene, this.camera); }
   // gate agent: until the post chain programs report linked, draw the scene into the composer's first target (the
   // target every real program was compiled for, so no draw time compile) and copy it to the screen with one tiny
@@ -1529,7 +1531,9 @@ export class RowPlayer {
       this.report.gateFrames = st.topFrames; this.report.gatePrograms = st.programs;
       this.lowresActive = false; if (this.dprGov) this.dprGov.resume(pr0); else this.setDpr(pr0); this.report.lowres.restored = r.getPixelRatio(); mark('full resolution'); this.invalidate(4); this.emit('ready', this.report.gate);
       // RR_FLAGS.occl (main, Oct 29): line of sight culling, built once after the open, off the first frames
-      if (+((globalThis.RR_FLAGS || {}).occl || 0) && this.cullList && !this.los) setTimeout(() => { try { this.los = new LineOfSight(this.cullList); this.report.occl = this.los.stats; this.invalidate(2); } catch (e) { this.report.occlErr = String(e); } }, 1500); });
+      if (+((globalThis.RR_FLAGS || {}).occl || 0) && this.cullList && !this.los) setTimeout(() => { try { this.los = new LineOfSight(this.cullList); this.report.occl = this.los.stats; this.invalidate(2); } catch (e) { this.report.occlErr = String(e); }
+        // RR_FLAGS.proplod (main, Oct 29): lighter copies of the dense props, simplified in a worker (rr2_lod.js)
+        if (+((globalThis.RR_FLAGS || {}).proplod || 0) && !this.lod) { try { this.lod = new PropLOD(this.cullList, { invalidate: () => this.invalidate(2) }); this.report.lod = this.lod.stats; this.lod.run().catch(e => { this.report.lodErr = String(e); }); } catch (e) { this.report.lodErr = String(e); } } }, 1500); });
     return gate; }
   // map first loading (gate agent): load in the background on a canvas that is laid out but not shown (visibility
   // hidden, not display none, so it keeps a size). Starts at idle priority, compiles only through the gate, draws
