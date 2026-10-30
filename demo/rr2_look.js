@@ -177,11 +177,13 @@ export function installLook(P, M, { ungrade = (h) => new THREE.Color(h), flags =
     const g = gs0(need, issue, wrapApply, mark);
     g.finished.then(() => { LK.report.programs.atReady = R.info.programs.length; LK.report.readyAt = Math.round(performance.now());
       if (!later.length) return;
-      const dg = LK.deferGate = new ProgramGate(R, { gateMs: 4, maxInFlight: 8, perFrame: 64 });
+      const dg = LK.deferGate = new ProgramGate(R, { gateMs: 8, maxInFlight: 32, perFrame: 64 });
       for (const m of later) dg.add(m, issue, wrapApply);
-      setTimeout(() => { if (!LK.gliding) dg.start(); }, 400);
+      // main, Oct 29 night: a glide at the 400 ms mark used to skip the start for good, leaving the rest on fallbacks; now it waits for the glide
+      const kick = () => { if (LK.gliding) setTimeout(kick, 300); else dg.start(); }; setTimeout(kick, 400);
       dg.finished.then(() => { dg.frameLog = []; dg.progs = new Map(); dg.waiters = new Map(); LK.report.programs.afterDeferred = R.info.programs.length; LK.report.deferredAt = Math.round(performance.now()); P.invalidate(2); });
     });
+    LK.allLinked = g.finished.then(() => LK.deferGate && LK.deferGate.finished);   // walk and free walk wait on this (rr_section.js)
     return g;
   };
   // C9 final approach: one hidden render of the ground view at the destination before the drop starts, with the ground state

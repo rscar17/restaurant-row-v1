@@ -77,7 +77,9 @@ export const SHIP_FLAGS = {
   // main, Oct 29 night: Ryan saw low res textures, Matteo's glass missing and a wrong shade live; every Oct 29 switch that
   // changes the picture is off again (texture cap, line of sight, light props, far prop hide, small object skip, mirror cuts).
   // Load time changes (worker decoding, idle start, walk waits for shaders) stay.
-  heavyTris: 1e12
+  heavyTris: 1e12,
+  // textures stream by distance again (every picture full at once filled 92 % RAM on the laptop); 192 within 45 m on 8 GB+, rr2_assets.js
+  texstream: 1
 };
 
 // Flags that other agents are verifying on r8f data today (Oct 15). PLACEHOLDERS: each stays off for visitors until its
