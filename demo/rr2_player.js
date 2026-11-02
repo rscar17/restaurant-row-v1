@@ -35,6 +35,7 @@ import { CaptureCache, queuedFetch, PRI, stats as assetStats, netQueue, memleanS
 import { pickTier, DprGovernor } from './rr2_tier.js';
 import { ProgramGate } from './rr2_gate.js';
 import { lmOn, loadLightmaps, applyLightmaps } from './rr2_lightmap.js';
+import { preStart, preGet, preDump, preFlush, passSig, meshList, mergeDump, bvhDump, bvhApply, coveDump, coveApply } from './rr2_pre.js';   // agent pre Nov 2: load passes precomputed offline (data/pre)
 import { delmint } from './rr2_delmint.js';   // agent delmint Oct 22: Delmonico vaults, chandeliers, stone room, cream walls, carpet
 // The exact look of Ryan's Cycles 360s (meta.json "grade"): 0.75 x Khronos PBR Neutral at -0.35 EV + 0.25 x AgX with the
 // Punchy look at -0.25 EV, mixed in display space. Checked against Blender 5.2's own OCIO processors (PyOpenColorIO in
@@ -107,8 +108,8 @@ function areaTextures(root) {
 // typed array: one divisor per array type, stride and offset for interleaved data. RR_FLAGS.perfslowfloat = 1 keeps the old loop.
 const DENORM = new Map([[Uint32Array, [4294967295.0, false]], [Uint16Array, [65535.0, false]], [Uint8Array, [255.0, false]],
   [Int32Array, [2147483647.0, true]], [Int16Array, [32767.0, true]], [Int8Array, [127.0, true]]]);
-function toFloatAttr(a) {
-  const n = a.count, s = a.itemSize, out = new Float32Array(n * s);
+function toFloatAttr(a, into = null) {   // into: a Float32Array of n * s to write to (rr2_pre plan merge), else a new one
+  const n = a.count, s = a.itemSize, out = into || new Float32Array(n * s);
   const il = !!a.isInterleavedBufferAttribute, arr = il ? a.data.array : a.array, st = il ? a.data.stride : s, off = il ? a.offset : 0;
   const dn = a.normalized && arr.constructor !== Float32Array ? DENORM.get(arr.constructor) : null;
   if (a.normalized && arr.constructor !== Float32Array && !dn) { for (let i = 0; i < n; i++) for (let j = 0; j < s; j++) out[i * s + j] = a.getComponent(i, j); return out; }
@@ -117,6 +118,40 @@ function toFloatAttr(a) {
   const D = dn[0];
   if (dn[1]) { for (let i = 0; i < n; i++) { const b = i * st + off; for (let j = 0; j < s; j++) out[i * s + j] = Math.max(arr[b + j] / D, -1.0); } }
   else { for (let i = 0; i < n; i++) { const b = i * st + off; for (let j = 0; j < s; j++) out[i * s + j] = arr[b + j] / D; } }
+  return out;
+}
+// mergeGeometries(geos, false) for the pre_merge plan (rr2_pre.js): same attributes in the same order, same arrays (set
+// end to end), the index joined in a typed array instead of a JS array of getX values, then given the type three's
+// setIndex picks for that array (Uint32 when any value reaches 65535, else Uint16). Morph attributes are already gone.
+function mergeFast(geos) {
+  const out = new THREE.BufferGeometry(), g0 = geos[0];
+  if (g0.index) { let n = 0; for (const g of geos) n += g.index.count; const ix = new Uint32Array(n); let o = 0, base = 0, mx = 0;
+    for (const g of geos) { const a = g.index.array; for (let j = 0; j < g.index.count; j++) { const v = a[j] + base; ix[o++] = v; if (v > mx) mx = v; } base += g.attributes.position.count; }
+    out.setIndex(mx >= 65535 ? new THREE.Uint32BufferAttribute(ix, 1) : new THREE.Uint16BufferAttribute(ix, 1)); }
+  for (const name of Object.keys(g0.attributes)) { const a0 = g0.attributes[name]; let n = 0;
+    for (const g of geos) { const a = g.attributes[name]; if (!a || a.isInterleavedBufferAttribute || a.array.constructor !== a0.array.constructor || a.itemSize !== a0.itemSize || a.normalized !== a0.normalized) return mergeGeometries(geos, false); n += a.count * a.itemSize; }
+    const arr = new a0.array.constructor(n); let o = 0; for (const g of geos) { const a = g.attributes[name]; arr.set(a.array.subarray(0, a.count * a.itemSize), o); o += a.count * a.itemSize; }
+    out.setAttribute(name, new THREE.BufferAttribute(arr, a0.itemSize, a0.normalized)); }
+  return out;
+}
+// pre_merge plan, the common group (no piece flattened, all indexed or none): each piece is expanded straight into the
+// merged arrays and baked there (toFloatAttr into, applyMatrixFast and flipWinding on views of the piece's range), so
+// the pieces' own float copies and the join are gone. Same steps on the same values as toFloatGeometry + mergeFast.
+function mergeDirect(list) {
+  const g0 = list[0].geometry, names = Object.keys(g0.attributes), idx = !!g0.index;
+  for (const o of list) { const g = o.geometry; if (!!g.index !== idx || Object.keys(g.attributes).length !== names.length || names.some(k => !g.attributes[k] || g.attributes[k].itemSize !== g0.attributes[k].itemSize)) return null; }
+  const cnt = list.map(o => o.geometry.attributes.position.count), out = new THREE.BufferGeometry(), arrs = {};
+  for (const k of names) { const s = g0.attributes[k].itemSize; let tot = 0; for (const c of cnt) tot += c * s; arrs[k] = new Float32Array(tot); }
+  let ix = null, io = 0, mx = 0; if (idx) { let tot = 0; for (const o of list) tot += o.geometry.index.array.length; ix = new Uint32Array(tot); }
+  let vo = 0;
+  for (let j = 0; j < list.length; j++) { const o = list[j], src = o.geometry, n = cnt[j], v = new THREE.BufferGeometry();
+    for (const k of names) { const s = src.attributes[k].itemSize, view = arrs[k].subarray(vo * s, (vo + n) * s); toFloatAttr(src.attributes[k], view); v.setAttribute(k, new THREE.BufferAttribute(view, s)); }
+    let iv = null; if (idx) { const a = src.index.array; iv = ix.subarray(io, io + a.length); iv.set(a); v.setIndex(new THREE.BufferAttribute(iv, 1)); }
+    applyMatrixFast(v, o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(v);
+    if (iv) { for (let q = 0; q < iv.length; q++) { const x = iv[q] + vo; iv[q] = x; if (x > mx) mx = x; } io += iv.length; }
+    vo += n; }
+  if (ix) out.setIndex(mx >= 65535 ? new THREE.Uint32BufferAttribute(ix, 1) : new THREE.Uint16BufferAttribute(ix, 1));
+  for (const k of names) out.setAttribute(k, new THREE.BufferAttribute(arrs[k], g0.attributes[k].itemSize));
   return out;
 }
 function toFloatGeometry(src) {
@@ -349,6 +384,7 @@ export class RowPlayer {
     if ((globalThis.RR_FLAGS || {}).lightloop) this.report.lightLoopsDyn = dynamicLightLoops(); // rr2_lightloop.js
     this.report.shField = await loadSHField(capsUrl + '/sh.json');
     let i = 0; const tl = this.report.timeline = []; const t0 = performance.now(); this.report.loadT0 = Math.round(t0); const mark = (m) => tl.push([+((performance.now() - t0) / 1000).toFixed(2), m]);
+    this.preP = preStart();   // rr2_pre.js: data/pre files download beside the areas (none unless a pre_ flag is on)
     if (lmOn() && !this.lmData && !this.lmPromise) { this.lmPromise = loadLightmaps((globalThis.RR_FLAGS || {}).lmurl || 'data/lm/lm.json'); this.lmPromise.catch(() => {}); }   // main 04:3x: atlases download alongside the GLBs
     // every section's files are requested up front through one priority queue (the start section first, outer
     // sections after); materials and lighting are then applied section by section in order while later downloads run
@@ -823,7 +859,13 @@ export class RowPlayer {
       if (this.blLights && !(globalThis.RR_FLAGS || {}).noglint && this.profile.glints !== false) { this.floor.addLampGlints(this.scene, [...this.blLights.values()], (globalThis.RR_FLAGS || {}).glint ?? 1); this.report.lampGlints = this.floor.glints; }
     }
     mark('pass floor mirror');
-    if (!(globalThis.RR_FLAGS || {}).nocove && this.profile.cove !== false) { const cv = this.cove = new CoveLights(this.profile.covePatches); const np = cv.collect(root, this.blMats || {}, (globalThis.RR_FLAGS || {}).cove ?? 6) + cv.addDownlights([...(this.blLights?.values() || [])], root);
+    if (!(globalThis.RR_FLAGS || {}).nocove && this.profile.cove !== false) { const cv = this.cove = new CoveLights(this.profile.covePatches);
+      // pre (rr2_pre.js, RR_FLAGS.pre_cove): the lines, patches and downlights come from data/pre/cove.bin
+      const cvL = this.preP.cove || preDump() ? passSig(meshList(root)) : null, cvPre = this.preP.cove ? await preGet(this.preP, 'cove', cvL, this.report) : null, hides = [];
+      if (preDump()) { const h = cv.hideSide; cv.hideSide = function (o) { const v = h.call(this, o); hides.push(v); return v; }; }
+      const tcv = performance.now(); const np = cvPre ? coveApply(cv, root, this.blMats || {}, (globalThis.RR_FLAGS || {}).cove ?? 6, cvPre) : cv.collect(root, this.blMats || {}, (globalThis.RR_FLAGS || {}).cove ?? 6) + cv.addDownlights([...(this.blLights?.values() || [])], root);
+      this.report.coveMs = Math.round(performance.now() - tcv);   // collect + addDownlights (patchReceivers is in the pass mark)
+      if (preDump()) { delete cv.hideSide; coveDump(cvL, cv, hides, np); }
       this.report.coveLights = { patches: np, constEmitters: cv.constEmitters || 0, downlights: cv.dls.length, lines: cv.report, receivers: cv.patchReceivers(root), outKinds: cv.outReport, sample: cv.patches.slice(0, 3).map(c => ({ p: c.p.toArray().map(v => +v.toFixed(2)), n: c.n.toArray().map(v => +v.toFixed(2)), flux: c.flux.toArray().map(v => +v.toFixed(3)) })) }; if (!np) this.cove = null; }
     mark('pass cove');
     // Sugarcane near field: the Material_108 strips and the vault light the ceiling slab Mesh_2230 right above them in
@@ -833,7 +875,10 @@ export class RowPlayer {
     // turns it off, RR_FLAGS.roomcal replaces the calibration table, player.rooms.uOn.value = 0 switches it live for A/B
     if (!(globalThis.RR_FLAGS || {}).norooms) { const F = globalThis.RR_FLAGS || {}; this.rooms = new RoomLighting(F.roomcal ? { cal: F.roomcal } : {}); this.report.rooms = this.rooms.patchAll(root); }
     mark('pass rooms+sugbake');
-    this.buildCollision();
+    { // pre (RR_FLAGS.pre_bvh): both colliders and their BVHs from data/pre/bvh.bin
+      const sg = this.preP.bvh || preDump() ? passSig(meshList(this.root), JSON.stringify([this.walkCenter, this.walkRadius, String(this.collisionFilter || '')])) : null;
+      const pd = this.preP.bvh ? await preGet(this.preP, 'bvh', sg, this.report) : null;
+      if (pd) bvhApply(this, pd); else { this.buildCollision(); if (preDump()) bvhDump(sg, this); } }
     mark('pass collision');
     this.addFloorUnderlay();
     mark('pass underlay');
@@ -847,11 +892,15 @@ export class RowPlayer {
     try { this.report.delmint = delmint(this); mark('delmint'); } catch (e) { (this.report.errors ||= []).push('delmint: ' + e.message); }
     // main 03:4x (ship found it): lightmaps go on BEFORE mergeStatic, which folds meshes into nameless 'merged:<material>' meshes;
     // baked copies are cached per source material and atlas, so the merge key keeps baked with baked of the same atlas
-    if (lmOn()) { try { this.lmData ||= await (this.lmPromise || loadLightmaps((globalThis.RR_FLAGS || {}).lmurl || 'data/lm/lm.json')); this.report.lightmap = applyLightmaps(this.root, this.lmData); mark('lightmaps applied'); } catch (e) { (this.report.errors ||= []).push('lightmap: ' + e.message); } }
+    if (lmOn()) { try { this.lmData ||= await (this.lmPromise || loadLightmaps((globalThis.RR_FLAGS || {}).lmurl || 'data/lm/lm.json')); this.report.lightmap = applyLightmaps(this.root, this.lmData, { baseTex }); mark('lightmaps applied'); } catch (e) { (this.report.errors ||= []).push('lightmap: ' + e.message); } }
     // RR_FLAGS.mergeCell (main, Oct 29): merge cell in metres; the Intel laptop is draw call bound (about 1800 calls, the pass
     // barely changes at half resolution), so larger cells mean fewer calls for the same pixels
-    this.mergeStatic(+((globalThis.RR_FLAGS || {}).mergeCell ?? 8));
+    { // pre (RR_FLAGS.pre_merge): the merged groups from data/pre/merge.bin
+      const cell = +((globalThis.RR_FLAGS || {}).mergeCell ?? 8), L = this.preP.merge || preDump() ? meshList(this.root) : null, sg = L ? passSig(L, 'cell' + cell) : null;
+      const pd = this.preP.merge ? await preGet(this.preP, 'merge', sg, this.report) : null;
+      this.mergeStatic(cell, preDump() ? { sig: sg, L } : null, pd ? { groups: pd.meta.groups, L } : null); }
     mark('pass mergeStatic');
+    if (preDump()) { this.report.preDump = 'posting'; preFlush().then(() => { this.report.preDump = 'done'; }, (e) => { this.report.preDump = 'failed ' + e.message; }); }
     // black glass (rr2_reflect.js thinGlass, glassLate) is drawn at the end of the opaque pass, after everything opaque it
     // covers, still blended as a pane: three's transmission target then holds it, so the reeded panes in front of it read
     // dark. Set after the merge and the cove receivers, which both skip transparent materials and must keep skipping it.
@@ -1239,7 +1288,7 @@ export class RowPlayer {
   }
   // static collision: one BVH over walls, counters, columns and glass (everything taller than 0.4 m that is not floor or ceiling)
   buildCollision(center = this.walkCenter, radius = this.walkRadius) {
-    const parts = []; const bb = new THREE.Box3(); const v = new THREE.Vector3();
+    const parts = []; const bb = new THREE.Box3(); const v = new THREE.Vector3(); const cT0 = performance.now(); let cTb = 0;
     this.root.updateMatrixWorld(true);
     this.root.traverse(o => {
       if (!o.isMesh || o.isInstancedMesh) return; bb.setFromObject(o);
@@ -1252,15 +1301,15 @@ export class RowPlayer {
     });
     const total = parts.reduce((a, b) => a + b.length, 0); const all = new Float32Array(total); let off = 0; for (const a of parts) { all.set(a, off); off += a.length; }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(all, 3));
-    g.computeBoundsTree(); this.collider = new THREE.Mesh(g, new THREE.MeshBasicMaterial()); this.collider.visible = false;
+    { const t = performance.now(); g.computeBoundsTree(); cTb += performance.now() - t; } this.collider = new THREE.Mesh(g, new THREE.MeshBasicMaterial()); this.collider.visible = false;
     // floor finder: everything below 0.3 m
     const fparts = []; this.root.traverse(o => { if (!o.isMesh || o.isInstancedMesh) return; bb.setFromObject(o); if (bb.max.y > 0.3) return; if (this.collisionFilter ? !this.collisionFilter(bb) : (center && bb.distanceToPoint(center) > radius)) return;
       const gg = o.geometry, p = gg.attributes.position, idx = gg.index; const n = idx ? idx.count : p.count; const arr = new Float32Array(n * 3);
       for (let i = 0; i < n; i++) { v.fromBufferAttribute(p, idx ? idx.getX(i) : i).applyMatrix4(o.matrixWorld); arr[i * 3] = v.x; arr[i * 3 + 1] = v.y; arr[i * 3 + 2] = v.z; } fparts.push(arr); });
     const ft = fparts.reduce((a, b) => a + b.length, 0); const fa = new Float32Array(ft); off = 0; for (const a of fparts) { fa.set(a, off); off += a.length; }
-    const fg = new THREE.BufferGeometry(); fg.setAttribute('position', new THREE.BufferAttribute(fa, 3)); fg.computeBoundsTree();
+    const fg = new THREE.BufferGeometry(); fg.setAttribute('position', new THREE.BufferAttribute(fa, 3)); { const t = performance.now(); fg.computeBoundsTree(); cTb += performance.now() - t; }
     this.floorCollider = new THREE.Mesh(fg, new THREE.MeshBasicMaterial());
-    this.report.collisionTris = all.length / 9; this.report.floorTris = fa.length / 9;
+    this.report.collisionTris = all.length / 9; this.report.floorTris = fa.length / 9; this.report.collisionMs = { total: Math.round(performance.now() - cT0), bvh: Math.round(cTb) };
   }
   setStop(bpos, yawDeg = 0) { this.mode = 'stop'; this.camera.position.copy(B2T(bpos)); this.yaw = THREE.MathUtils.degToRad(yawDeg); this.pitch = 0; this.camera.fov = 60; this.camera.updateProjectionMatrix(); }
   setFree() { this.mode = 'free'; }
@@ -1380,42 +1429,72 @@ export class RowPlayer {
     out.cpuVertexMB = +(vb / 1048576).toFixed(1); if (this.memGeo) out.geo = { ...this.memGeo, MB: +(this.memGeo.bytes / 1048576).toFixed(1), releasedMB: +(this.memGeo.releasedBytes / 1048576).toFixed(1) };
     return out;
   }
-  mergeStatic(cell = 8) {
-    this.root.updateMatrixWorld(true);
-    const groups = new Map(); const bb = new THREE.Box3(), c = new THREE.Vector3();
-    this.root.traverse(o => {
-      if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material.transparent || o.morphTargetInfluences) return;
-      const g = o.geometry; bb.setFromObject(o); bb.getCenter(c);
-      const key = o.material.uuid + '|' + Object.keys(g.attributes).sort().join(',') + '|' + (g.index ? 1 : 0) + '|' + Math.floor(c.x / cell) + ',' + Math.floor(c.z / cell) + '|' + (o.renderOrder || 0) + '|' + (o.userData.rrKey || '');
-      if (!groups.has(key)) groups.set(key, []); groups.get(key).push(o);
-    });
+  // dump (rr2_pre.js, RR_FLAGS.pre_dump): { sig, L }: the plan (groups as indices into L, each piece's skewed normal
+  // share) is recorded for data/pre/merge.bin. plan (RR_FLAGS.pre_merge): that file's groups; the grouping walk and the
+  // skewed normal tests are skipped and the index buffers are joined in typed arrays (mergeFast), the same values.
+  mergeStatic(cell = 8, dump = null, plan = null) {
+    this.root.updateMatrixWorld(true); const rec = dump ? [] : null, T0 = performance.now(), pt = { group: 0, prep: 0, join: 0, bounds: 0 };
+    let groups;
+    if (plan) groups = plan.groups.map(q => ({ list: q.m.map(i => plan.L[i]), q }));
+    else { const gm = new Map(); const bb = new THREE.Box3(), c = new THREE.Vector3();
+      this.root.traverse(o => {
+        if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material.transparent || o.morphTargetInfluences) return;
+        const g = o.geometry; bb.setFromObject(o); bb.getCenter(c);
+        const key = o.material.uuid + '|' + Object.keys(g.attributes).sort().join(',') + '|' + (g.index ? 1 : 0) + '|' + Math.floor(c.x / cell) + ',' + Math.floor(c.z / cell) + '|' + (o.renderOrder || 0) + '|' + (o.userData.rrKey || '');
+        if (!gm.has(key)) gm.set(key, []); gm.get(key).push(o);
+      });
+      groups = [...gm.values()].map(list => ({ list, q: null })); }
+    pt.group = performance.now() - T0;
+    const at = rec ? new Map(dump.L.map((o, i) => [o, i])) : null;
+    // plan: the merged pieces leave their parents in one filter per parent at the end (Object3D.remove is an indexOf and a
+    // splice per call: 9000 of them over the big area groups took about 2 s); same final child order, same events
+    const gone = plan ? [] : null;
     let before = 0, after = 0;
-    for (const list of groups.values()) {
+    for (const { list, q } of groups) {
       before += list.length;
       if (list.length < 2) { after++;
         // a single mesh keeps its own geometry; skewed normals are fixed on a local copy the same way
-        const o = list[0], F0 = globalThis.RR_FLAGS || {};
-        if (!F0.noflatfix && o.geometry.attributes.normal && !o.isInstancedMesh) { const gw = toFloatGeometry(o.geometry); applyMatrixFast(gw, o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(gw); const bs = badNormalShare(gw); gw.dispose(); if (bs > 0.1) { let g = toFloatGeometry(o.geometry); g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('normal'); g.computeVertexNormals(); o.geometry = g; (this.report.flatNormals = this.report.flatNormals || []).length < 200 && this.report.flatNormals.push([o.userData.invName || o.name, +bs.toFixed(2), 's']); } }
+        const o = list[0], F0 = globalThis.RR_FLAGS || {}; let bs = 0;
+        if (q) bs = q.bs || 0;
+        else if (!F0.noflatfix && o.geometry.attributes.normal && !o.isInstancedMesh) { const gw = toFloatGeometry(o.geometry); applyMatrixFast(gw, o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(gw); bs = badNormalShare(gw); gw.dispose(); }
+        if (bs > 0.1) { let g = toFloatGeometry(o.geometry); g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('normal'); g.computeVertexNormals(); o.geometry = g; (this.report.flatNormals = this.report.flatNormals || []).length < 200 && this.report.flatNormals.push([o.userData.invName || o.name, +bs.toFixed(2), 's']); }
+        if (rec) rec.push({ m: [at.get(o)], bs });
         continue; }
+      if (q && q.x) { after += list.length; continue; }   // the live merge failed for this group: nothing to build
       // meshopt-quantized exports store positions/normals/uvs as normalized Int16/Int8 in [-1,1] with the dequantize
       // scale in the node matrix; baking world space into those arrays clamps every vertex to +-1 (the merged group
       // collapses to a 2 m box at the origin). Expand every attribute to plain Float32 before baking.
       // mirrored objects (negative scale) are drawn by three with flipped face culling; once baked into world space that
       // flag is gone, so their triangle winding is reversed here or the outside faces are culled and the insides show
-      const FN = globalThis.RR_FLAGS || {}; this.report.flatNormals = this.report.flatNormals || [];
-      const geos = list.map(o => { let g = toFloatGeometry(o.geometry); applyMatrixFast(g, o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(g); for (const k of Object.keys(g.morphAttributes)) delete g.morphAttributes[k];
+      const FN = globalThis.RR_FLAGS || {}; this.report.flatNormals = this.report.flatNormals || []; const fl = [];
+      const tp = performance.now();
+      // plan: the common group goes straight into the merged arrays (mergeDirect)
+      const direct = q && !list.some((o, j) => !FN.noflatfix && o.geometry.attributes.normal && q.fl[j] > 0.1) ? mergeDirect(list) : null;
+      const geos = direct ? [] : list.map((o, j) => { let g = toFloatGeometry(o.geometry); applyMatrixFast(g, o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(g); for (const k of Object.keys(g.morphAttributes)) delete g.morphAttributes[k];
         // more than 10 % of the triangles with skewed normals: use the faces' own normals (flat; RR_FLAGS.noflatfix keeps them)
-        if (!FN.noflatfix && g.attributes.normal) { const bs = badNormalShare(g); if (bs > 0.1) { g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('normal'); g.computeVertexNormals(); if (this.report.flatNormals.length < 200) this.report.flatNormals.push([o.userData.invName || o.name, +bs.toFixed(2)]); } }
+        if (!FN.noflatfix && g.attributes.normal) { const bs = q ? q.fl[j] : badNormalShare(g); fl.push(bs); if (bs > 0.1) { g = g.index ? g.toNonIndexed() : g; g.deleteAttribute('normal'); g.computeVertexNormals(); if (this.report.flatNormals.length < 200) this.report.flatNormals.push([o.userData.invName || o.name, +bs.toFixed(2)]); } }
+        else fl.push(0);
         return g; });
       if (geos.some(g => g.index) && geos.some(g => !g.index)) for (let i = 0; i < geos.length; i++) if (geos[i].index) geos[i] = geos[i].toNonIndexed(); // flattened pieces are non indexed: the group must match
-      const merged = mergeGeometries(geos, false); geos.forEach(g => g.dispose());
-      if (!merged) { after += list.length; continue; }
+      const tj = performance.now(); pt.prep += tj - tp;
+      const merged = direct || (q ? mergeFast(geos) : mergeGeometries(geos, false));
+      // RR_FLAGS.pre_check = 1: every planned group is also built the live way and compared byte for byte (report.preCheck)
+      if (q && +(globalThis.RR_FLAGS || {}).pre_check) { const ref = mergeGeometries(list.map(o => { const g = toFloatGeometry(o.geometry); applyMatrixFast(g, o.matrixWorld); if (o.matrixWorld.determinant() < 0) flipWinding(g); return g; }), false), pc = (this.report.preCheck ||= { groups: 0, bad: 0, badNames: [] }); pc.groups++;
+        const eq = (a, b) => !!a === !!b && (!a || (a.array.constructor === b.array.constructor && a.itemSize === b.itemSize && a.normalized === b.normalized && a.array.length === b.array.length && a.array.every((x, i) => Object.is(x, b.array[i]))));
+        if (!direct || !ref || !eq(merged.index, ref.index) || Object.keys(ref.attributes).join() !== Object.keys(merged.attributes).join() || Object.keys(ref.attributes).some(k => !eq(merged.attributes[k], ref.attributes[k]))) { if (direct || ref) { pc.bad += direct ? 1 : 0; if (direct && pc.badNames.length < 20) pc.badNames.push(list[0].material.name); } } } geos.forEach(g => g.dispose()); pt.join += performance.now() - tj;
+      if (!merged) { after += list.length; if (rec) rec.push({ m: list.map(o => at.get(o)), x: 1 }); continue; }
       const m = new THREE.Mesh(merged, list[0].material); m.name = 'merged:' + list[0].material.name; m.frustumCulled = true;
       if (list[0].userData.rr) { m.userData.rr = list[0].userData.rr; m.userData.rrKey = list[0].userData.rrKey; }
-      merged.computeBoundingSphere(); merged.computeBoundingBox();
-      this.root.add(m); for (const o of list) o.parent && o.parent.remove(o); after++;
+      const tb = performance.now();
+      if (q && q.bs) { merged.boundingSphere = new THREE.Sphere(new THREE.Vector3(q.bs[0], q.bs[1], q.bs[2]), q.bs[3]); merged.boundingBox = new THREE.Box3(new THREE.Vector3(q.bb[0], q.bb[1], q.bb[2]), new THREE.Vector3(q.bb[3], q.bb[4], q.bb[5])); }
+      else { merged.computeBoundingSphere(); merged.computeBoundingBox(); } pt.bounds += performance.now() - tb;
+      this.root.add(m); if (gone) gone.push(...list); else for (const o of list) o.parent && o.parent.remove(o); after++; if (rec) { const s = merged.boundingSphere, b = merged.boundingBox; rec.push({ m: list.map(o => at.get(o)), fl, bs: [s.center.x, s.center.y, s.center.z, s.radius], bb: [...b.min.toArray(), ...b.max.toArray()] }); }
     }
-    this.report.drawGroups = { before, after };
+    if (gone && gone.length) { const set = new Set(gone), parents = new Set(); for (const o of gone) if (o.parent) parents.add(o.parent);
+      for (const p of parents) p.children = p.children.filter(o => !set.has(o));
+      for (const o of gone) { const p = o.parent; if (!p) continue; o.parent = null; o.dispatchEvent({ type: 'removed' }); p.dispatchEvent({ type: 'childremoved', child: o }); } }
+    this.report.drawGroups = { before, after }; this.report.mergeMs = { total: Math.round(performance.now() - T0), group: Math.round(pt.group), prep: Math.round(pt.prep), join: Math.round(pt.join), bounds: Math.round(pt.bounds), plan: !!plan };
+    if (rec) mergeDump(dump.sig, rec, before, after);
   }
   // screen-size culling: objects that would cover less than about a pixel are skipped (nothing is simplified; a cup on a
   // table 30 m away is simply not drawn). The floor mirror additionally skips small things more than 12 m off.

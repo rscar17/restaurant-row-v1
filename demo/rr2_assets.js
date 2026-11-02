@@ -50,7 +50,7 @@ export const stats = { fetches: 0, bytes: 0, workerDecodes: 0, mainDecodes: 0, c
 // to about 45 % and 13 %. A host that already strips the gzip layer (Content-Encoding) is detected by the magic bytes; a
 // missing .gz falls back to the plain file, so a data folder without .gz files works unchanged.
 const gzOn = () => !!+((globalThis.RR_FLAGS || {}).gzdata || 0) && typeof DecompressionStream !== 'undefined';
-const GZ_RE = /\.(glb|json)(\.part\d+)?$/;
+const GZ_RE = /\.(glb|json|bin)(\.part\d+)?$/;   // bin: data/pre (rr2_pre.js)
 async function asType(buf, as) {
   if (as === 'arrayBuffer') return buf; if (as === 'blob') return new Blob([buf]);
   const txt = new TextDecoder().decode(buf); return as === 'json' ? JSON.parse(txt) : txt;

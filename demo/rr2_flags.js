@@ -79,7 +79,10 @@ export const SHIP_FLAGS = {
   // Load time changes (worker decoding, idle start, walk waits for shaders) stay.
   heavyTris: 1e12,
   // textures stream by distance again (every picture full at once filled 92 % RAM on the laptop); 192 within 45 m on 8 GB+, rr2_assets.js
-  texstream: 1
+  texstream: 1,
+  // agent pre, Nov 2 (rr2_pre.js): cove lines, collision BVHs and merged groups read from data/pre (tools/pre_build.py);
+  // a missing or stale file runs the live pass. pre_cove / pre_bvh / pre_merge = 0 turn them off one by one
+  pre_cove: 1, pre_bvh: 1, pre_merge: 1
 };
 
 // Flags that other agents are verifying on r8f data today (Oct 15). PLACEHOLDERS: each stays off for visitors until its

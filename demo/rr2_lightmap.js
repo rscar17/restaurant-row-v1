@@ -48,12 +48,28 @@ function lmCopy(src, tex, scale) {
   m.name = (src.name || 'm') + ' [lm]'; m.userData.lmBaked = true; return m;
 }
 
+// RR_FLAGS.lmfast (main, Oct 30, Ryan's fast version to compare): a baked surface becomes one plain shader, base texture and
+// colour x Cycles lightmap, instead of a copy of its Blender graph (about 480 programs at about 0.2 s each on the Intel driver).
+// Every lmfast material shares one or two programs (with or without a map). The base is the material's own map or the first
+// sRGB texture of its graph (the fallbacks' pick), so a graph that mixes or tints colours shows its plain texture.
+const FAST = new Map();
+function lmFast(src, tex, scale, baseTex) {
+  const map = baseTex ? baseTex(src) : src.map || null;
+  const m = new THREE.MeshBasicMaterial({ map, color: src.color ? src.color.clone() : 0xffffff, side: src.side, alphaTest: src.alphaTest || 0, alphaMap: src.alphaMap || null, vertexColors: !!src.vertexColors });
+  m.lightMap = tex; m.lightMapIntensity = 1; m.userData = { ...src.userData, lmBaked: true, lmFast: true };
+  m.onBeforeCompile = (sh) => { sh.uniforms.uLmScale = { value: scale };
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uLmScale;')
+      .replace('#include <opaque_fragment>', '{ vec4 rrLmT = texture2D( lightMap, vLightMapUv ); outgoingLight = diffuseColor.rgb * rrLmT.rgb * rrLmT.a * 8.0 * uLmScale; }\n#include <opaque_fragment>'); };
+  m.customProgramCacheKey = () => 'rrlmfast';
+  m.name = (src.name || 'm') + ' [lmf]'; return m;
+}
+
 // swaps the materials of every baked mesh (named in an enabled area, carrying uv1); returns a report
-export function applyLightmaps(root, lm) {
+export function applyLightmaps(root, lm, { baseTex = null } = {}) { const fast = !!+(F().lmfast ?? 0);
   const cache = new Map(); const rep = { baked: 0, keptOwn: 0, noUv1: 0, materials: 0, areas: Object.keys(lm.areas) };
   root.traverse(o => { if (!o.isMesh) return; const e = lm.byName.get(o.userData.invName || o.name); if (!e) return;
     if (!o.geometry || !o.geometry.getAttribute('uv1')) { rep.noUv1++; return; }
-    const one = (src) => { if (keepOwn(src) || e.skip.has(src.name)) { rep.keptOwn++; return src; } const k = src.uuid + '|' + e.tex.uuid; let m = cache.get(k); if (!m) { m = lmCopy(src, e.tex, lm.scale); cache.set(k, m); } return m; };
+    const one = (src) => { if (keepOwn(src) || e.skip.has(src.name)) { rep.keptOwn++; return src; } const k = src.uuid + '|' + e.tex.uuid; let m = cache.get(k); if (!m) { m = fast ? lmFast(src, e.tex, lm.scale, baseTex) : lmCopy(src, e.tex, lm.scale); cache.set(k, m); } return m; };
     o.material = Array.isArray(o.material) ? o.material.map(one) : one(o.material); rep.baked++; });
   rep.materials = cache.size; return rep;
 }
