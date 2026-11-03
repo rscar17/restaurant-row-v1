@@ -164,7 +164,7 @@ function setup(root) {
     if ((t === 'walk' || t === 'free') && st.P && st.P.compiling && !st.compiled) {
       st.waitWalk = t; setPressed(t); if (card) { card.hidden = false; card.textContent = 'Getting the ' + (t === 'free' ? 'free walk' : 'walkthrough') + ' ready, a few more seconds.'; }
       if (!st.waitHooked) { st.waitHooked = true; const go = () => { if (st.compiled) return; st.compiled = true; const w = st.waitWalk; st.waitWalk = null; if (card) card.hidden = true; if (w) select(w); };
-        ((st.LK && st.LK.allLinked) || st.P.compiling).then(go, go); setTimeout(go, 40000); }   // every real material (deferred ones too); never hold a walk longer than 40 s
+        ((st.LK && st.LK.allLinked) || st.P.compiling).then(go, go); }   // every real material (deferred ones too); no time cap (Nov 2): a walk never opens on stand-ins
       return; }
     if (card) card.hidden = true;
     st.active = t; setPressed(t);
