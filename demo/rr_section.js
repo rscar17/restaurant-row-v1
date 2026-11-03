@@ -163,8 +163,9 @@ function setup(root) {
     // a walk started earlier froze for up to 4.5 s on each new material. The choice is kept and opens the moment they are linked.
     if ((t === 'walk' || t === 'free') && st.P && st.P.compiling && !st.compiled) {
       st.waitWalk = t; setPressed(t); if (card) { card.hidden = false; card.textContent = 'Getting the ' + (t === 'free' ? 'free walk' : 'walkthrough') + ' ready, a few more seconds.'; }
+      if (st.LK && st.LK.rush) st.LK.rush(true);   // Nov 3: link at full speed while the visitor waits
       // go runs once (one promise settlement); it must not bail on st.compiled, which becomeReady's earlier hook sets on the same promise first
-      if (!st.waitHooked) { st.waitHooked = true; const go = () => { st.compiled = true; const w = st.waitWalk; st.waitWalk = null; if (card) card.hidden = true; if (w) select(w); };
+      if (!st.waitHooked) { st.waitHooked = true; const go = () => { st.compiled = true; if (st.LK && st.LK.rush) st.LK.rush(false); const w = st.waitWalk; st.waitWalk = null; if (card) card.hidden = true; if (w) select(w); };
         ((st.LK && st.LK.allLinked) || st.P.compiling).then(go, go); }   // every real material (deferred ones too); no time cap (Nov 2): a walk never opens on stand-ins
       return; }
     if (card) card.hidden = true;

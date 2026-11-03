@@ -200,6 +200,11 @@ export function installLook(P, M, { ungrade = (h) => new THREE.Color(h), flags =
     const dg = LK.deferGate; if (!dg || dg.done) return 0; const a = performance.now(); const g0 = [dg.gateMs, dg.maxInFlight]; dg.gateMs = 14; dg.maxInFlight = 32; dg.start(); dg.finished.then(() => {}); setTimeout(() => { dg.gateMs = g0[0]; dg.maxInFlight = g0[1]; }, maxMs);
     await Promise.race([dg.finished, new Promise(r => setTimeout(r, maxMs))]); return Math.round(performance.now() - a);
   };
+  // main, Nov 3: a visitor has asked for a walk and is waiting on the card: spend most of each frame on linking instead of
+  // 8 ms (the view behind the card may stutter). rr_section.js turns it on at the request and off when the walk opens.
+  LK.rush = (on) => { const dg = LK.deferGate; if (!dg || dg.done) return;
+    if (on) { if (!LK._rush0) { LK._rush0 = [dg.gateMs, dg.maxInFlight]; dg.gateMs = +(F.lookrushms ?? 60); dg.maxInFlight = 64; dg.start(); } }
+    else if (LK._rush0) { [dg.gateMs, dg.maxInFlight] = LK._rush0; LK._rush0 = null; } };
 
   LK.init = () => {
     const T0 = performance.now(), D = M.D, root = P.root, bb = new THREE.Box3();
